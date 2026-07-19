@@ -1,0 +1,30 @@
+{
+  "name": "@sentinel-x/contracts",
+  "version": "0.1.0",
+  "description": "OpenAPI-aligned contracts for Sentinel-X AVR",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "check": "pnpm run typecheck && pnpm run build && pnpm run test",
+    "prepack": "pnpm run check",
+    "pack:check": "npm pack --dry-run"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}

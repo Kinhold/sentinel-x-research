@@ -1,0 +1,32 @@
+{
+  "name": "sentinel-x-research",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sentinel-X AVR defensive vulnerability research framework for Rust, Noir, and Solana targets.",
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @sentinel-x/api --filter @sentinel-x/dashboard dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "check": "pnpm -r check",
+    "typecheck": "pnpm -r typecheck",
+    "pack:check": "pnpm --filter @sentinel-x/contracts pack:check && pnpm --filter @sentinel-x/agent pack:check"
+  },
+  "keywords": [
+    "kinhold",
+    "security",
+    "bug-bounty",
+    "avr",
+    "defensive"
+  ],
+  "author": "Kinhold",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kinhold/sentinel-x-research.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.33.3"
+}

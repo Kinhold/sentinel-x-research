@@ -1,0 +1,661 @@
+openapi: 3.1.0
+info:
+  title: Api
+  version: 0.1.0
+  description: Sentinel-X AVR Framework API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: scans
+    description: Scan job management
+  - name: vulnerabilities
+    description: Vulnerability findings
+  - name: targets
+    description: Scan targets (repos)
+  - name: reports
+    description: Immunefi-compliant reports
+  - name: logs
+    description: Live scan log streaming
+  - name: stats
+    description: Dashboard statistics
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /targets:
+    get:
+      operationId: listTargets
+      tags: [targets]
+      summary: List all scan targets
+      responses:
+        "200":
+          description: List of targets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Target"
+    post:
+      operationId: createTarget
+      tags: [targets]
+      summary: Add a new scan target
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTargetBody"
+      responses:
+        "201":
+          description: Target created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+
+  /targets/{id}:
+    get:
+      operationId: getTarget
+      tags: [targets]
+      summary: Get a target by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Target
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Target"
+    delete:
+      operationId: deleteTarget
+      tags: [targets]
+      summary: Delete a target
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /scans:
+    get:
+      operationId: listScans
+      tags: [scans]
+      summary: List all scan jobs
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, running, completed, failed]
+        - name: targetId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of scans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Scan"
+    post:
+      operationId: createScan
+      tags: [scans]
+      summary: Start a new scan job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateScanBody"
+      responses:
+        "201":
+          description: Scan created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+
+  /scans/{id}:
+    get:
+      operationId: getScan
+      tags: [scans]
+      summary: Get a scan by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+
+  /scans/{id}/cancel:
+    post:
+      operationId: cancelScan
+      tags: [scans]
+      summary: Cancel a running scan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scan cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+
+  /vulnerabilities:
+    get:
+      operationId: listVulnerabilities
+      tags: [vulnerabilities]
+      summary: List all discovered vulnerabilities
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [discovered, verified, false_positive, reported]
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [critical, high, medium, low, informational]
+        - name: targetLanguage
+          in: query
+          schema:
+            type: string
+            enum: [rust, noir, solana]
+        - name: scanId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of vulnerabilities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Vulnerability"
+
+  /vulnerabilities/{id}:
+    get:
+      operationId: getVulnerability
+      tags: [vulnerabilities]
+      summary: Get a vulnerability by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Vulnerability detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vulnerability"
+    patch:
+      operationId: updateVulnerability
+      tags: [vulnerabilities]
+      summary: Update vulnerability status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateVulnerabilityBody"
+      responses:
+        "200":
+          description: Updated vulnerability
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vulnerability"
+
+  /reports/{vulnerabilityId}:
+    get:
+      operationId: getReport
+      tags: [reports]
+      summary: Get Immunefi-formatted report for a vulnerability
+      parameters:
+        - name: vulnerabilityId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+
+  /stats/dashboard:
+    get:
+      operationId: getDashboardStats
+      tags: [stats]
+      summary: Get dashboard summary statistics
+      responses:
+        "200":
+          description: Dashboard stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStats"
+
+  /stats/payout-potential:
+    get:
+      operationId: getPayoutPotential
+      tags: [stats]
+      summary: Get aggregated payout potential from verified bugs
+      responses:
+        "200":
+          description: Payout data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PayoutPotential"
+
+  /logs/{scanId}:
+    get:
+      operationId: getScanLogs
+      tags: [logs]
+      summary: Get logs for a scan (SSE stream — consume via fetch, not generated hook)
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: SSE stream of log entries
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    Target:
+      type: object
+      properties:
+        id:
+          type: integer
+        repoUrl:
+          type: string
+        name:
+          type: string
+        language:
+          type: string
+          enum: [rust, noir, solana]
+        description:
+          type: string
+          nullable: true
+        bountyPlatform:
+          type: string
+          nullable: true
+        maxPayout:
+          type: number
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - repoUrl
+        - name
+        - language
+        - createdAt
+
+    CreateTargetBody:
+      type: object
+      properties:
+        repoUrl:
+          type: string
+        name:
+          type: string
+        language:
+          type: string
+          enum: [rust, noir, solana]
+        description:
+          type: string
+          nullable: true
+        bountyPlatform:
+          type: string
+          nullable: true
+        maxPayout:
+          type: number
+          nullable: true
+      required:
+        - repoUrl
+        - name
+        - language
+
+    Scan:
+      type: object
+      properties:
+        id:
+          type: integer
+        targetId:
+          type: integer
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+        phase:
+          type: string
+          enum: [discovery, verification, reporting, idle]
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        errorMessage:
+          type: string
+          nullable: true
+        bugsFound:
+          type: integer
+        bugsVerified:
+          type: integer
+        target:
+          $ref: "#/components/schemas/Target"
+          nullable: true
+      required:
+        - id
+        - targetId
+        - status
+        - createdAt
+        - bugsFound
+        - bugsVerified
+
+    CreateScanBody:
+      type: object
+      properties:
+        targetId:
+          type: integer
+      required:
+        - targetId
+
+    Vulnerability:
+      type: object
+      properties:
+        id:
+          type: integer
+        scanId:
+          type: integer
+        targetId:
+          type: integer
+        title:
+          type: string
+        description:
+          type: string
+        severity:
+          type: string
+          enum: [critical, high, medium, low, informational]
+        vulnType:
+          type: string
+          enum: [integer_overflow, reentrancy, access_control, under_constrained_circuit, arithmetic_error, uninitialized_account, cpi_vulnerability, other]
+        targetLanguage:
+          type: string
+          enum: [rust, noir, solana]
+        status:
+          type: string
+          enum: [discovered, verified, false_positive, reported]
+        affectedFile:
+          type: string
+          nullable: true
+        affectedFunction:
+          type: string
+          nullable: true
+        lineNumber:
+          type: integer
+          nullable: true
+        pocCode:
+          type: string
+          nullable: true
+        fvHarness:
+          type: string
+          nullable: true
+        fvLog:
+          type: string
+          nullable: true
+        counterExample:
+          type: string
+          nullable: true
+        estimatedPayout:
+          type: number
+          nullable: true
+        confidenceScore:
+          type: number
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        verifiedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - id
+        - scanId
+        - targetId
+        - title
+        - description
+        - severity
+        - vulnType
+        - targetLanguage
+        - status
+        - createdAt
+
+    UpdateVulnerabilityBody:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [discovered, verified, false_positive, reported]
+
+    Report:
+      type: object
+      properties:
+        vulnerabilityId:
+          type: integer
+        markdown:
+          type: string
+        title:
+          type: string
+        severity:
+          type: string
+        generatedAt:
+          type: string
+          format: date-time
+      required:
+        - vulnerabilityId
+        - markdown
+        - title
+        - severity
+        - generatedAt
+
+    DashboardStats:
+      type: object
+      properties:
+        totalScans:
+          type: integer
+        activeScans:
+          type: integer
+        totalTargets:
+          type: integer
+        totalVulnerabilities:
+          type: integer
+        verifiedVulnerabilities:
+          type: integer
+        criticalCount:
+          type: integer
+        highCount:
+          type: integer
+        payoutPotential:
+          type: number
+        recentActivity:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityItem"
+        severityBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/SeverityCount"
+      required:
+        - totalScans
+        - activeScans
+        - totalTargets
+        - totalVulnerabilities
+        - verifiedVulnerabilities
+        - criticalCount
+        - highCount
+        - payoutPotential
+        - recentActivity
+        - severityBreakdown
+
+    ActivityItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+          enum: [scan_started, bug_found, bug_verified, scan_completed]
+        message:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        severity:
+          type: string
+          nullable: true
+      required:
+        - id
+        - type
+        - message
+        - timestamp
+
+    SeverityCount:
+      type: object
+      properties:
+        severity:
+          type: string
+        count:
+          type: integer
+        verified:
+          type: integer
+      required:
+        - severity
+        - count
+        - verified
+
+    PayoutPotential:
+      type: object
+      properties:
+        total:
+          type: number
+        byTarget:
+          type: array
+          items:
+            $ref: "#/components/schemas/TargetPayout"
+        bySeverity:
+          type: array
+          items:
+            $ref: "#/components/schemas/SeverityPayout"
+      required:
+        - total
+        - byTarget
+        - bySeverity
+
+    TargetPayout:
+      type: object
+      properties:
+        targetId:
+          type: integer
+        targetName:
+          type: string
+        payout:
+          type: number
+        verifiedCount:
+          type: integer
+      required:
+        - targetId
+        - targetName
+        - payout
+        - verifiedCount
+
+    SeverityPayout:
+      type: object
+      properties:
+        severity:
+          type: string
+        payout:
+          type: number
+        count:
+          type: integer
+      required:
+        - severity
+        - payout
+        - count

@@ -1,0 +1,34 @@
+{
+  "name": "@sentinel-x/agent",
+  "version": "0.1.0",
+  "description": "Defensive AVR scan pipeline for Sentinel-X",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "check": "pnpm run typecheck && pnpm run build && pnpm run test",
+    "prepack": "pnpm run check",
+    "pack:check": "npm pack --dry-run"
+  },
+  "dependencies": {
+    "@sentinel-x/contracts": "workspace:*",
+    "@sentinel-x/storage": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}
