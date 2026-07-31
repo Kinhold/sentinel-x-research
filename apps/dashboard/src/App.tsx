@@ -116,6 +116,17 @@ export function App() {
           <button className="btn ghost" type="button" onClick={() => void refresh()} disabled={pending}>
             Refresh
           </button>
+          <button
+            className="btn ghost"
+            type="button"
+            onClick={() => {
+              void client.sarif(selectedScan ?? undefined).then((payload) => {
+                setReport(JSON.stringify(payload, null, 2));
+              });
+            }}
+          >
+            Export SARIF
+          </button>
         </div>
       </header>
 

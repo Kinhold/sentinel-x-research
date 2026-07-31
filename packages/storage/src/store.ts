@@ -339,6 +339,27 @@ export class SentinelStore {
     return row ? mapVulnerability(row) : null;
   }
 
+  findVerifiedByFingerprint(fingerprint: string, targetId?: number): Vulnerability | null {
+    const row = (
+      targetId == null
+        ? this.db
+            .prepare(
+              `SELECT * FROM vulnerabilities
+               WHERE fingerprint = ? AND status IN ('verified', 'reported')
+               ORDER BY id DESC LIMIT 1`,
+            )
+            .get(fingerprint)
+        : this.db
+            .prepare(
+              `SELECT * FROM vulnerabilities
+               WHERE fingerprint = ? AND target_id = ? AND status IN ('verified', 'reported')
+               ORDER BY id DESC LIMIT 1`,
+            )
+            .get(fingerprint, targetId)
+    ) as VulnerabilityRow | undefined;
+    return row ? mapVulnerability(row) : null;
+  }
+
   updateVulnerabilityStatus(id: number, status: VulnerabilityStatus): Vulnerability | null {
     const verifiedAt =
       status === 'verified' || status === 'reported' ? new Date().toISOString() : null;

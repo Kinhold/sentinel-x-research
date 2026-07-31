@@ -49,8 +49,17 @@ Optional operator auth: set `API_KEY` (API) / `VITE_API_KEY` (dashboard).
 
 ## Ingest modes
 
-1. **Fixture** (default offline): resolves `SCAN_FIXTURES_DIR` by target name/language (`noir-sample`, `rust-sample`, `solana-sample`).
+1. **Fixture** (default offline): resolves `SCAN_FIXTURES_DIR` by target name/language (`noir-sample`, `rust-sample`, `solana-sample`, plus `*-safe` negative controls).
 2. **Clone** (optional): shallow `git clone --depth 1` of allowlisted HTTPS hosts (`github.com`, `gitlab.com`, `bitbucket.org`, `codeberg.org`) into `WORKSPACE_CACHE_DIR`. Disable with `ALLOW_CLONE=0`.
+
+## Elite core controls
+
+- **Scan queue**: concurrency (`SCAN_CONCURRENCY`) + timeout (`SCAN_TIMEOUT_MS`)
+- **Fingerprint dedupe**: skip re-verifying findings already verified/reported for the same target
+- **SARIF export**: `GET /api/exports/sarif?scanId=`
+- **Tool adapters** (opt-in): `ENABLE_TOOL_ADAPTERS=1` runs `cargo`/`nargo`/`anchor` when present — never invents tool output
+- **Request IDs**: every response carries `X-Request-Id`
+- **Docker**: `docker compose up --build` serves the API
 
 ## Honesty bounds
 

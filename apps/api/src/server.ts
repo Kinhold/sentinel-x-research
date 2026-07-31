@@ -1,9 +1,10 @@
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { config } from 'dotenv';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
-import { ScanRunner, buildImmunefiReport } from '@sentinel-x/agent';
+import { ScanQueue, ScanRunner, buildImmunefiReport, buildSarifReport } from '@sentinel-x/agent';
 import {
   isTargetLanguage,
   isVulnerabilitySeverity,
@@ -19,13 +20,24 @@ config();
 export interface AppOptions {
   store?: SentinelStore;
   runner?: ScanRunner;
+  queue?: ScanQueue;
   fixturesDir?: string;
   workspaceCacheDir?: string;
   corsOrigin?: string;
   apiKey?: string | null;
+  scanConcurrency?: number;
+  scanTimeoutMs?: number;
 }
 
 const rootDir = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+
+declare global {
+  namespace Express {
+    interface Request {
+      requestId?: string;
+    }
+  }
+}
 
 export function createApp(options: AppOptions = {}): Express {
   const store =
@@ -45,17 +57,31 @@ export function createApp(options: AppOptions = {}): Express {
       fixturesDir,
       workspaceCacheDir,
       allowClone: process.env.ALLOW_CLONE !== '0',
+      enableToolAdapters: process.env.ENABLE_TOOL_ADAPTERS === '1',
+      dedupeFingerprints: process.env.DEDUPE_FINGERPRINTS !== '0',
     });
-  const activeScans = new Set<number>();
+  const queue =
+    options.queue ??
+    new ScanQueue(runner, {
+      concurrency: options.scanConcurrency ?? Number(process.env.SCAN_CONCURRENCY ?? 2),
+      timeoutMs: options.scanTimeoutMs ?? Number(process.env.SCAN_TIMEOUT_MS ?? 600_000),
+      onError: (scanId, error) => {
+        console.error(`Scan ${scanId} failed`, error);
+      },
+    });
   const corsOrigin = options.corsOrigin ?? process.env.CORS_ORIGIN ?? 'http://localhost:5174';
   const apiKey = options.apiKey === undefined ? process.env.API_KEY ?? null : options.apiKey;
 
   const app = express();
 
   app.use((req, res, next) => {
+    const requestId = req.header('x-request-id') || randomUUID();
+    req.requestId = requestId;
+    res.setHeader('X-Request-Id', requestId);
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-Request-Id');
+    res.setHeader('Access-Control-Expose-Headers', 'X-Request-Id');
     if (req.method === 'OPTIONS') {
       res.status(204).end();
       return;
@@ -75,14 +101,18 @@ export function createApp(options: AppOptions = {}): Express {
     }
     const provided = req.header('x-api-key') ?? bearer(req.header('authorization'));
     if (provided !== apiKey) {
-      res.status(401).json({ error: 'Unauthorized' });
+      res.status(401).json({ error: 'Unauthorized', requestId: req.requestId, code: 'unauthorized' });
       return;
     }
     next();
   });
 
-  app.get('/api/healthz', (_req, res) => {
-    res.json({ status: 'ok' });
+  app.get('/api/healthz', (req, res) => {
+    res.json({ status: 'ok', requestId: req.requestId });
+  });
+
+  app.get('/api/queue', (_req, res) => {
+    res.json(queue.size());
   });
 
   app.get('/api/targets', (_req, res) => {
@@ -101,7 +131,7 @@ export function createApp(options: AppOptions = {}): Express {
   app.get('/api/targets/:id', (req, res) => {
     const target = store.getTarget(Number(req.params.id));
     if (!target) {
-      res.status(404).json({ error: 'Target not found' });
+      res.status(404).json({ error: 'Target not found', requestId: req.requestId, code: 'not_found' });
       return;
     }
     res.json(target);
@@ -128,7 +158,7 @@ export function createApp(options: AppOptions = {}): Express {
     try {
       const body = parseCreateScanBody(req.body);
       const scan = store.createScan(body.targetId);
-      queueScan(scan.id);
+      queue.enqueue(scan.id);
       res.status(201).json(scan);
     } catch (error) {
       next(error);
@@ -138,7 +168,7 @@ export function createApp(options: AppOptions = {}): Express {
   app.get('/api/scans/:id', (req, res) => {
     const scan = store.getScan(Number(req.params.id));
     if (!scan) {
-      res.status(404).json({ error: 'Scan not found' });
+      res.status(404).json({ error: 'Scan not found', requestId: req.requestId, code: 'not_found' });
       return;
     }
     res.json(scan);
@@ -149,7 +179,7 @@ export function createApp(options: AppOptions = {}): Express {
       runner.cancel(Number(req.params.id));
       const scan = store.getScan(Number(req.params.id));
       if (!scan) {
-        res.status(404).json({ error: 'Scan not found' });
+        res.status(404).json({ error: 'Scan not found', requestId: req.requestId, code: 'not_found' });
         return;
       }
       res.json(scan);
@@ -180,7 +210,7 @@ export function createApp(options: AppOptions = {}): Express {
   app.get('/api/vulnerabilities/:id', (req, res) => {
     const vulnerability = store.getVulnerability(Number(req.params.id));
     if (!vulnerability) {
-      res.status(404).json({ error: 'Vulnerability not found' });
+      res.status(404).json({ error: 'Vulnerability not found', requestId: req.requestId, code: 'not_found' });
       return;
     }
     res.json(vulnerability);
@@ -191,7 +221,7 @@ export function createApp(options: AppOptions = {}): Express {
       const body = parseUpdateVulnerabilityBody(req.body);
       const vulnerability = store.updateVulnerabilityStatus(Number(req.params.id), body.status);
       if (!vulnerability) {
-        res.status(404).json({ error: 'Vulnerability not found' });
+        res.status(404).json({ error: 'Vulnerability not found', requestId: req.requestId, code: 'not_found' });
         return;
       }
       res.json(vulnerability);
@@ -209,10 +239,18 @@ export function createApp(options: AppOptions = {}): Express {
     }
     const vulnerability = store.getVulnerability(vulnerabilityId);
     if (!vulnerability) {
-      res.status(404).json({ error: 'Vulnerability not found' });
+      res.status(404).json({ error: 'Vulnerability not found', requestId: req.requestId, code: 'not_found' });
       return;
     }
     res.json(buildImmunefiReport(vulnerability));
+  });
+
+  app.get('/api/exports/sarif', (req, res) => {
+    const scanId = req.query.scanId ? Number(req.query.scanId) : undefined;
+    const vulnerabilities = store.listVulnerabilities({
+      scanId: Number.isInteger(scanId) ? scanId : undefined,
+    });
+    res.json(buildSarifReport({ vulnerabilities }));
   });
 
   app.get('/api/stats/dashboard', (_req, res) => {
@@ -227,7 +265,7 @@ export function createApp(options: AppOptions = {}): Express {
     const scanId = Number(req.params.scanId);
     const scan = store.getScan(scanId);
     if (!scan) {
-      res.status(404).json({ error: 'Scan not found' });
+      res.status(404).json({ error: 'Scan not found', requestId: req.requestId, code: 'not_found' });
       return;
     }
 
@@ -260,23 +298,10 @@ export function createApp(options: AppOptions = {}): Express {
     req.on('close', () => clearInterval(interval));
   });
 
-  app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
     const message = error instanceof Error ? error.message : 'Unexpected error';
-    res.status(400).json({ error: message });
+    res.status(400).json({ error: message, requestId: req.requestId, code: 'bad_request' });
   });
-
-  function queueScan(scanId: number): void {
-    if (activeScans.has(scanId)) return;
-    activeScans.add(scanId);
-    setImmediate(() => {
-      runner
-        .run(scanId)
-        .catch((error) => {
-          console.error(`Scan ${scanId} failed`, error);
-        })
-        .finally(() => activeScans.delete(scanId));
-    });
-  }
 
   return app;
 }

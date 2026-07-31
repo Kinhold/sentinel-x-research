@@ -36,6 +36,43 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 
+  /queue:
+    get:
+      operationId: getQueueSize
+      tags: [scans]
+      summary: Get scan queue depth
+      responses:
+        "200":
+          description: Queue size
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pending:
+                    type: integer
+                  active:
+                    type: integer
+                required: [pending, active]
+
+  /exports/sarif:
+    get:
+      operationId: exportSarif
+      tags: [reports]
+      summary: Export findings as SARIF 2.1.0
+      parameters:
+        - name: scanId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: SARIF log
+          content:
+            application/json:
+              schema:
+                type: object
+
   /targets:
     get:
       operationId: listTargets
@@ -328,8 +365,22 @@ components:
       properties:
         status:
           type: string
+        requestId:
+          type: string
       required:
         - status
+
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: string
+        requestId:
+          type: string
+        code:
+          type: string
+      required:
+        - error
 
     Target:
       type: object

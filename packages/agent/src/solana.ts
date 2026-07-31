@@ -8,7 +8,7 @@ export function analyzeSolanaSources(files: SourceFile[]): DiscoveryFinding[] {
     const cpiPattern = /invoke(?:_signed)?\s*\(/g;
     let match: RegExpExecArray | null;
     while ((match = cpiPattern.exec(file.content)) !== null) {
-      const context = windowAround(file.content, match.index, 120, 260);
+      const context = windowAround(file.content, match.index, 280, 260);
       if (/owner|is_signer|has_one|signer::|AccountInfo.*is_signer|constraint\s*=/.test(context)) {
         continue;
       }

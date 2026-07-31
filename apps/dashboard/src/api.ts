@@ -39,6 +39,8 @@ export const client = {
       body: JSON.stringify({ status }),
     }),
   report: (vulnerabilityId: number) => api<Report>(`/api/reports/${vulnerabilityId}`),
+  sarif: (scanId?: number) =>
+    api<unknown>(`/api/exports/sarif${scanId != null ? `?scanId=${scanId}` : ''}`),
 };
 
 export type TargetLanguage = 'rust' | 'noir' | 'solana';

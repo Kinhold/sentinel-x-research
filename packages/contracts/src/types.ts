@@ -22,6 +22,13 @@ export type ActivityType =
 
 export interface HealthStatus {
   status: string;
+  requestId?: string;
+}
+
+export interface ApiError {
+  error: string;
+  requestId?: string;
+  code?: string;
 }
 
 export interface Target {

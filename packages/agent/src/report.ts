@@ -11,24 +11,29 @@ export interface VerificationResult {
 const MIN_SNIPPET = 8;
 const VERIFY_FLOOR = 0.62;
 
-export function verifyFinding(finding: DiscoveryFinding): VerificationResult {
+export function verifyFinding(
+  finding: DiscoveryFinding,
+  options: { adapterBoost?: number; adapterLog?: string } = {},
+): VerificationResult {
   const harness = buildHarness(finding);
   const hasConcreteSnippet = Boolean(finding.pocCode && finding.pocCode.trim().length >= MIN_SNIPPET);
   const hasLocation = Boolean(finding.affectedFile && finding.lineNumber);
   const hasRule = Boolean(finding.ruleId || finding.fingerprint);
   const structural = [hasConcreteSnippet, hasLocation, hasRule].filter(Boolean).length;
-  const highConfidence = finding.confidenceScore >= VERIFY_FLOOR;
+  const boostedConfidence = Math.min(0.99, finding.confidenceScore + (options.adapterBoost ?? 0));
+  const highConfidence = boostedConfidence >= VERIFY_FLOOR;
   const verified = highConfidence && structural >= 2;
+  const adapterNote = options.adapterLog ? ` Adapters: ${options.adapterLog}` : '';
 
   return {
     status: verified ? 'verified' : 'false_positive',
     confidenceScore: verified
-      ? Math.min(0.97, finding.confidenceScore + 0.06 + structural * 0.01)
-      : Math.max(0.15, finding.confidenceScore - 0.22),
+      ? Math.min(0.97, boostedConfidence + 0.06 + structural * 0.01)
+      : Math.max(0.15, boostedConfidence - 0.22),
     fvHarness: harness,
     fvLog: verified
-      ? `Bounded defensive verification accepted finding (structural=${structural}/3, rule=${finding.ruleId ?? 'n/a'}). Operator must validate on live scope.`
-      : `Finding failed structural/confidence gate (structural=${structural}/3). Downgraded to false positive.`,
+      ? `Bounded defensive verification accepted finding (structural=${structural}/3, rule=${finding.ruleId ?? 'n/a'}).${adapterNote} Operator must validate on live scope.`
+      : `Finding failed structural/confidence gate (structural=${structural}/3).${adapterNote} Downgraded to false positive.`,
     counterExample: verified ? finding.pocCode ?? null : null,
   };
 }

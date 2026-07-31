@@ -1,0 +1,21 @@
+services:
+  api:
+    build:
+      context: .
+      target: api
+    ports:
+      - "8788:8788"
+    environment:
+      PORT: 8788
+      DATABASE_PATH: /data/sentinel-x.db
+      SCAN_FIXTURES_DIR: /app/fixtures/repos
+      WORKSPACE_CACHE_DIR: /data/workspaces
+      CORS_ORIGIN: http://localhost:5174
+      ALLOW_CLONE: "0"
+      SCAN_CONCURRENCY: "2"
+      SCAN_TIMEOUT_MS: "600000"
+    volumes:
+      - sentinel-data:/data
+
+volumes:
+  sentinel-data:

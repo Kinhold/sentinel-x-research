@@ -18,7 +18,9 @@ test('health check responds ok', async () => {
   const app = testApp();
   const response = await request(app, '/api/healthz');
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { status: 'ok' });
+  const body = (await response.json()) as { status: string; requestId?: string };
+  assert.equal(body.status, 'ok');
+  assert.ok(body.requestId);
 });
 
 test('target and scan lifecycle', async () => {
@@ -68,6 +70,41 @@ test('API key auth rejects missing credentials', async () => {
     headers: { 'x-api-key': 'secret' },
   });
   assert.equal(allowed.status, 200);
+});
+
+test('SARIF export returns tool driver and results', async () => {
+  const app = testApp();
+  const targetResponse = await request(app, '/api/targets', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      repoUrl: 'https://github.com/example/rust-sample',
+      name: 'rust-sample',
+      language: 'rust',
+      maxPayout: 1000,
+    }),
+  });
+  const target = (await targetResponse.json()) as { id: number };
+  const scanResponse = await request(app, '/api/scans', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ targetId: target.id }),
+  });
+  const scan = (await scanResponse.json()) as { id: number };
+  await waitFor(async () => {
+    const current = await request(app, `/api/scans/${scan.id}`);
+    const body = (await current.json()) as { status: string };
+    return body.status === 'completed' || body.status === 'failed';
+  }, 8000);
+  const sarifResponse = await request(app, `/api/exports/sarif?scanId=${scan.id}`);
+  assert.equal(sarifResponse.status, 200);
+  const sarif = (await sarifResponse.json()) as {
+    version: string;
+    runs: Array<{ tool: { driver: { name: string } }; results: unknown[] }>;
+  };
+  assert.equal(sarif.version, '2.1.0');
+  assert.equal(sarif.runs[0]?.tool.driver.name, 'Sentinel-X');
+  assert.ok((sarif.runs[0]?.results.length ?? 0) >= 1);
 });
 
 async function waitFor(predicate: () => Promise<boolean>, timeoutMs: number): Promise<void> {

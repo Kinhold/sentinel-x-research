@@ -58,3 +58,16 @@ test('verifyFinding requires structural evidence', () => {
   });
   assert.equal(strong.status, 'verified');
 });
+
+test('safe fixtures stay quiet on high-severity classes', () => {
+  const rust = analyzeFixtureDirectory(join(fixtures, 'rust-safe'), 'rust');
+  assert.equal(rust.filter((f) => f.vulnType === 'integer_overflow').length, 0);
+
+  const noir = analyzeFixtureDirectory(join(fixtures, 'noir-safe'), 'noir');
+  assert.equal(noir.filter((f) => f.vulnType === 'under_constrained_circuit').length, 0);
+  assert.equal(noir.filter((f) => f.vulnType === 'arithmetic_error').length, 0);
+
+  const solana = analyzeFixtureDirectory(join(fixtures, 'solana-safe'), 'solana');
+  assert.equal(solana.filter((f) => f.vulnType === 'cpi_vulnerability').length, 0);
+  assert.equal(solana.filter((f) => f.vulnType === 'uninitialized_account').length, 0);
+});
