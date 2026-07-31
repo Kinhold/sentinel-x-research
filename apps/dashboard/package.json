@@ -1,0 +1,28 @@
+{
+  "name": "@sentinel-x/dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sentinel-X AVR operator console",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "check": "pnpm run typecheck && pnpm run build && pnpm run test",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@sentinel-x/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.7.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.5"
+  }
+}

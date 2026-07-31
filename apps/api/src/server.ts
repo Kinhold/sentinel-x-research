@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { config } from 'dotenv';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { ScanRunner, buildImmunefiReport } from '@sentinel-x/agent';
@@ -16,24 +16,46 @@ import { createDatabase, SentinelStore } from '@sentinel-x/storage';
 
 config();
 
+export interface AppOptions {
+  store?: SentinelStore;
+  runner?: ScanRunner;
+  fixturesDir?: string;
+  workspaceCacheDir?: string;
+  corsOrigin?: string;
+  apiKey?: string | null;
+}
+
 const rootDir = join(dirname(fileURLToPath(import.meta.url)), '../../..');
-const databasePath = process.env.DATABASE_PATH ?? join(rootDir, 'data/sentinel-x.db');
-mkdirSync(dirname(databasePath), { recursive: true });
 
-const db = createDatabase(databasePath);
-const store = new SentinelStore(db);
-const fixturesDir = process.env.SCAN_FIXTURES_DIR ?? join(rootDir, 'fixtures/repos');
-const runner = new ScanRunner(store, { fixturesDir });
-const activeScans = new Set<number>();
+export function createApp(options: AppOptions = {}): Express {
+  const store =
+    options.store ??
+    (() => {
+      const databasePath = process.env.DATABASE_PATH ?? join(rootDir, 'data/sentinel-x.db');
+      mkdirSync(dirname(databasePath), { recursive: true });
+      return new SentinelStore(createDatabase(databasePath));
+    })();
 
-export function createApp(): Express {
+  const fixturesDir = options.fixturesDir ?? process.env.SCAN_FIXTURES_DIR ?? join(rootDir, 'fixtures/repos');
+  const workspaceCacheDir =
+    options.workspaceCacheDir ?? process.env.WORKSPACE_CACHE_DIR ?? join(rootDir, 'data/workspaces');
+  const runner =
+    options.runner ??
+    new ScanRunner(store, {
+      fixturesDir,
+      workspaceCacheDir,
+      allowClone: process.env.ALLOW_CLONE !== '0',
+    });
+  const activeScans = new Set<number>();
+  const corsOrigin = options.corsOrigin ?? process.env.CORS_ORIGIN ?? 'http://localhost:5174';
+  const apiKey = options.apiKey === undefined ? process.env.API_KEY ?? null : options.apiKey;
+
   const app = express();
-  const corsOrigin = process.env.CORS_ORIGIN ?? 'http://localhost:5174';
 
   app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
     if (req.method === 'OPTIONS') {
       res.status(204).end();
       return;
@@ -41,6 +63,23 @@ export function createApp(): Express {
     next();
   });
   app.use(express.json({ limit: '1mb' }));
+
+  app.use((req, res, next) => {
+    if (!apiKey) {
+      next();
+      return;
+    }
+    if (req.path === '/api/healthz') {
+      next();
+      return;
+    }
+    const provided = req.header('x-api-key') ?? bearer(req.header('authorization'));
+    if (provided !== apiKey) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    next();
+  });
 
   app.get('/api/healthz', (_req, res) => {
     res.json({ status: 'ok' });
@@ -162,7 +201,13 @@ export function createApp(): Express {
   });
 
   app.get('/api/reports/:vulnerabilityId', (req, res) => {
-    const vulnerability = store.getVulnerability(Number(req.params.vulnerabilityId));
+    const vulnerabilityId = Number(req.params.vulnerabilityId);
+    const persisted = store.getReport(vulnerabilityId);
+    if (persisted) {
+      res.json(persisted);
+      return;
+    }
+    const vulnerability = store.getVulnerability(vulnerabilityId);
     if (!vulnerability) {
       res.status(404).json({ error: 'Vulnerability not found' });
       return;
@@ -191,16 +236,18 @@ export function createApp(): Express {
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders?.();
 
+    let cursor = 0;
     const existing = store.listScanLogs(scanId);
     for (const entry of existing) {
       res.write(`data: ${JSON.stringify(entry)}\n\n`);
+      cursor += 1;
     }
 
     const interval = setInterval(() => {
-      const latest = store.listScanLogs(scanId).slice(existing.length);
-      for (const entry of latest) {
+      const logs = store.listScanLogs(scanId);
+      for (const entry of logs.slice(cursor)) {
         res.write(`data: ${JSON.stringify(entry)}\n\n`);
-        existing.push(entry);
+        cursor += 1;
       }
       const current = store.getScan(scanId);
       if (current && (current.status === 'completed' || current.status === 'failed')) {
@@ -208,7 +255,7 @@ export function createApp(): Express {
         clearInterval(interval);
         res.end();
       }
-    }, 500);
+    }, 400);
 
     req.on('close', () => clearInterval(interval));
   });
@@ -218,21 +265,30 @@ export function createApp(): Express {
     res.status(400).json({ error: message });
   });
 
+  function queueScan(scanId: number): void {
+    if (activeScans.has(scanId)) return;
+    activeScans.add(scanId);
+    setImmediate(() => {
+      runner
+        .run(scanId)
+        .catch((error) => {
+          console.error(`Scan ${scanId} failed`, error);
+        })
+        .finally(() => activeScans.delete(scanId));
+    });
+  }
+
   return app;
 }
 
-function queueScan(scanId: number): void {
-  if (activeScans.has(scanId)) return;
-  activeScans.add(scanId);
-  setImmediate(() => {
-    runner
-      .run(scanId)
-      .catch(() => undefined)
-      .finally(() => activeScans.delete(scanId));
-  });
+function bearer(header: string | undefined): string | null {
+  if (!header) return null;
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1] ?? null;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isDirectRun) {
   const port = Number(process.env.PORT ?? 8788);
   createApp().listen(port, () => {
     console.log(`Sentinel-X API listening on http://localhost:${port}`);

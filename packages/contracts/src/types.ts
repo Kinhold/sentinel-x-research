@@ -12,7 +12,13 @@ export type VulnerabilityType =
   | 'uninitialized_account'
   | 'cpi_vulnerability'
   | 'other';
-export type ActivityType = 'scan_started' | 'bug_found' | 'bug_verified' | 'scan_completed';
+export type ActivityType =
+  | 'scan_started'
+  | 'bug_found'
+  | 'bug_verified'
+  | 'scan_completed'
+  | 'scan_cancelled'
+  | 'report_generated';
 
 export interface HealthStatus {
   status: string;
@@ -38,6 +44,8 @@ export interface CreateTargetBody {
   maxPayout?: number | null;
 }
 
+export type ScanSourceMode = 'fixture' | 'clone' | 'workspace';
+
 export interface Scan {
   id: number;
   targetId: number;
@@ -49,6 +57,9 @@ export interface Scan {
   errorMessage?: string | null;
   bugsFound: number;
   bugsVerified: number;
+  sourceMode?: ScanSourceMode | null;
+  sourcePath?: string | null;
+  sourceCommit?: string | null;
   target?: Target | null;
 }
 
@@ -75,6 +86,8 @@ export interface Vulnerability {
   counterExample?: string | null;
   estimatedPayout?: number | null;
   confidenceScore?: number | null;
+  ruleId?: string | null;
+  fingerprint?: string | null;
   createdAt: string;
   verifiedAt?: string | null;
 }
@@ -155,4 +168,6 @@ export interface DiscoveryFinding {
   lineNumber?: number;
   pocCode?: string;
   confidenceScore: number;
+  ruleId?: string;
+  fingerprint?: string;
 }

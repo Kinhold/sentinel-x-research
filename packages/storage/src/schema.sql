@@ -19,7 +19,10 @@ CREATE TABLE IF NOT EXISTS scans (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   error_message TEXT,
   bugs_found INTEGER NOT NULL DEFAULT 0,
-  bugs_verified INTEGER NOT NULL DEFAULT 0
+  bugs_verified INTEGER NOT NULL DEFAULT 0,
+  source_mode TEXT,
+  source_path TEXT,
+  source_commit TEXT
 );
 
 CREATE TABLE IF NOT EXISTS vulnerabilities (
@@ -41,8 +44,18 @@ CREATE TABLE IF NOT EXISTS vulnerabilities (
   counter_example TEXT,
   estimated_payout REAL,
   confidence_score REAL,
+  rule_id TEXT,
+  fingerprint TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   verified_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+  vulnerability_id INTEGER PRIMARY KEY REFERENCES vulnerabilities(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  markdown TEXT NOT NULL,
+  generated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS activities (
@@ -69,4 +82,5 @@ CREATE INDEX IF NOT EXISTS idx_scans_status ON scans(status);
 CREATE INDEX IF NOT EXISTS idx_vulnerabilities_scan_id ON vulnerabilities(scan_id);
 CREATE INDEX IF NOT EXISTS idx_vulnerabilities_status ON vulnerabilities(status);
 CREATE INDEX IF NOT EXISTS idx_vulnerabilities_severity ON vulnerabilities(severity);
+CREATE INDEX IF NOT EXISTS idx_vulnerabilities_fingerprint ON vulnerabilities(fingerprint);
 CREATE INDEX IF NOT EXISTS idx_scan_logs_scan_id ON scan_logs(scan_id);

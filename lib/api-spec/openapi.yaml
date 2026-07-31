@@ -418,6 +418,16 @@ components:
           type: integer
         bugsVerified:
           type: integer
+        sourceMode:
+          type: string
+          enum: [fixture, clone, workspace]
+          nullable: true
+        sourcePath:
+          type: string
+          nullable: true
+        sourceCommit:
+          type: string
+          nullable: true
         target:
           $ref: "#/components/schemas/Target"
           nullable: true
@@ -488,6 +498,12 @@ components:
           nullable: true
         confidenceScore:
           type: number
+          nullable: true
+        ruleId:
+          type: string
+          nullable: true
+        fingerprint:
+          type: string
           nullable: true
         createdAt:
           type: string
@@ -582,7 +598,7 @@ components:
           type: integer
         type:
           type: string
-          enum: [scan_started, bug_found, bug_verified, scan_completed]
+          enum: [scan_started, bug_found, bug_verified, scan_completed, scan_cancelled, report_generated]
         message:
           type: string
         timestamp:

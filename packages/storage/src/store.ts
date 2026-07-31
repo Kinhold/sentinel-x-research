@@ -4,9 +4,11 @@ import type {
   DashboardStats,
   DiscoveryFinding,
   PayoutPotential,
+  Report,
   Scan,
   ScanLogEntry,
   ScanPhase,
+  ScanSourceMode,
   ScanStatus,
   SeverityCount,
   Target,
@@ -40,6 +42,9 @@ type ScanRow = {
   error_message: string | null;
   bugs_found: number;
   bugs_verified: number;
+  source_mode: ScanSourceMode | null;
+  source_path: string | null;
+  source_commit: string | null;
 };
 
 type VulnerabilityRow = {
@@ -61,8 +66,18 @@ type VulnerabilityRow = {
   counter_example: string | null;
   estimated_payout: number | null;
   confidence_score: number | null;
+  rule_id: string | null;
+  fingerprint: string | null;
   created_at: string;
   verified_at: string | null;
+};
+
+type ReportRow = {
+  vulnerability_id: number;
+  title: string;
+  severity: string;
+  markdown: string;
+  generated_at: string;
 };
 
 function mapTarget(row: TargetRow): Target {
@@ -90,6 +105,9 @@ function mapScan(row: ScanRow, target?: Target | null): Scan {
     errorMessage: row.error_message,
     bugsFound: row.bugs_found,
     bugsVerified: row.bugs_verified,
+    sourceMode: row.source_mode,
+    sourcePath: row.source_path,
+    sourceCommit: row.source_commit,
     target: target ?? null,
   };
 }
@@ -114,8 +132,20 @@ function mapVulnerability(row: VulnerabilityRow): Vulnerability {
     counterExample: row.counter_example,
     estimatedPayout: row.estimated_payout,
     confidenceScore: row.confidence_score,
+    ruleId: row.rule_id,
+    fingerprint: row.fingerprint,
     createdAt: row.created_at,
     verifiedAt: row.verified_at,
+  };
+}
+
+function mapReport(row: ReportRow): Report {
+  return {
+    vulnerabilityId: row.vulnerability_id,
+    title: row.title,
+    severity: row.severity,
+    markdown: row.markdown,
+    generatedAt: row.generated_at,
   };
 }
 
@@ -168,10 +198,7 @@ export class SentinelStore {
     const rows = this.db
       .prepare(`SELECT s.* FROM scans s ${where} ORDER BY s.id DESC`)
       .all(...params) as ScanRow[];
-    return rows.map((row) => {
-      const target = this.getTarget(row.target_id);
-      return mapScan(row, target);
-    });
+    return rows.map((row) => mapScan(row, this.getTarget(row.target_id)));
   }
 
   getScan(id: number): Scan | null {
@@ -199,6 +226,9 @@ export class SentinelStore {
       errorMessage: string | null;
       bugsFound: number;
       bugsVerified: number;
+      sourceMode: ScanSourceMode | null;
+      sourcePath: string | null;
+      sourceCommit: string | null;
     }>,
   ): Scan | null {
     const current = this.getScan(id);
@@ -211,10 +241,13 @@ export class SentinelStore {
       errorMessage: patch.errorMessage === undefined ? current.errorMessage ?? null : patch.errorMessage,
       bugsFound: patch.bugsFound ?? current.bugsFound,
       bugsVerified: patch.bugsVerified ?? current.bugsVerified,
+      sourceMode: patch.sourceMode === undefined ? current.sourceMode ?? null : patch.sourceMode,
+      sourcePath: patch.sourcePath === undefined ? current.sourcePath ?? null : patch.sourcePath,
+      sourceCommit: patch.sourceCommit === undefined ? current.sourceCommit ?? null : patch.sourceCommit,
     };
     this.db
       .prepare(
-        `UPDATE scans SET status = ?, phase = ?, started_at = ?, completed_at = ?, error_message = ?, bugs_found = ?, bugs_verified = ? WHERE id = ?`,
+        `UPDATE scans SET status = ?, phase = ?, started_at = ?, completed_at = ?, error_message = ?, bugs_found = ?, bugs_verified = ?, source_mode = ?, source_path = ?, source_commit = ? WHERE id = ?`,
       )
       .run(
         next.status,
@@ -224,20 +257,29 @@ export class SentinelStore {
         next.errorMessage,
         next.bugsFound,
         next.bugsVerified,
+        next.sourceMode,
+        next.sourcePath,
+        next.sourceCommit,
         id,
       );
     return this.getScan(id);
   }
 
-  insertVulnerability(scanId: number, targetId: number, finding: DiscoveryFinding, targetLanguage: TargetLanguage): Vulnerability {
+  insertVulnerability(
+    scanId: number,
+    targetId: number,
+    finding: DiscoveryFinding,
+    targetLanguage: TargetLanguage,
+  ): Vulnerability {
     const target = this.getTarget(targetId);
     const estimatedPayout = this.estimatePayout(finding.severity, target?.maxPayout ?? null);
     const result = this.db
       .prepare(
         `INSERT INTO vulnerabilities (
           scan_id, target_id, title, description, severity, vuln_type, target_language,
-          affected_file, affected_function, line_number, poc_code, estimated_payout, confidence_score
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          affected_file, affected_function, line_number, poc_code, estimated_payout, confidence_score,
+          rule_id, fingerprint
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         scanId,
@@ -253,16 +295,20 @@ export class SentinelStore {
         finding.pocCode ?? null,
         estimatedPayout,
         finding.confidenceScore,
+        finding.ruleId ?? null,
+        finding.fingerprint ?? null,
       );
     return this.getVulnerability(Number(result.lastInsertRowid))!;
   }
 
-  listVulnerabilities(filters: {
-    status?: VulnerabilityStatus;
-    severity?: VulnerabilitySeverity;
-    targetLanguage?: TargetLanguage;
-    scanId?: number;
-  } = {}): Vulnerability[] {
+  listVulnerabilities(
+    filters: {
+      status?: VulnerabilityStatus;
+      severity?: VulnerabilitySeverity;
+      targetLanguage?: TargetLanguage;
+      scanId?: number;
+    } = {},
+  ): Vulnerability[] {
     const clauses: string[] = [];
     const params: Array<string | number> = [];
     if (filters.status) {
@@ -294,9 +340,14 @@ export class SentinelStore {
   }
 
   updateVulnerabilityStatus(id: number, status: VulnerabilityStatus): Vulnerability | null {
-    const verifiedAt = status === 'verified' || status === 'reported' ? new Date().toISOString() : null;
+    const verifiedAt =
+      status === 'verified' || status === 'reported' ? new Date().toISOString() : null;
     const result = this.db
-      .prepare('UPDATE vulnerabilities SET status = ?, verified_at = COALESCE(?, verified_at) WHERE id = ?')
+      .prepare(
+        status === 'verified' || status === 'reported'
+          ? 'UPDATE vulnerabilities SET status = ?, verified_at = COALESCE(?, verified_at) WHERE id = ?'
+          : 'UPDATE vulnerabilities SET status = ?, verified_at = ? WHERE id = ?',
+      )
       .run(status, verifiedAt, id);
     if (!result.changes) return null;
     return this.getVulnerability(id);
@@ -314,7 +365,12 @@ export class SentinelStore {
   ): Vulnerability | null {
     const current = this.getVulnerability(id);
     if (!current) return null;
-    const verifiedAt = patch.status === 'verified' || patch.status === 'reported' ? new Date().toISOString() : current.verifiedAt ?? null;
+    const verifiedAt =
+      patch.status === 'verified' || patch.status === 'reported'
+        ? new Date().toISOString()
+        : patch.status === 'false_positive' || patch.status === 'discovered'
+          ? null
+          : (current.verifiedAt ?? null);
     this.db
       .prepare(
         `UPDATE vulnerabilities
@@ -333,7 +389,35 @@ export class SentinelStore {
     return this.getVulnerability(id);
   }
 
-  appendActivity(type: ActivityItem['type'], message: string, severity: string | null = null, scanId?: number, vulnerabilityId?: number): ActivityItem {
+  upsertReport(report: Report): Report {
+    this.db
+      .prepare(
+        `INSERT INTO reports (vulnerability_id, title, severity, markdown, generated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(vulnerability_id) DO UPDATE SET
+           title = excluded.title,
+           severity = excluded.severity,
+           markdown = excluded.markdown,
+           generated_at = excluded.generated_at`,
+      )
+      .run(report.vulnerabilityId, report.title, report.severity, report.markdown, report.generatedAt);
+    return this.getReport(report.vulnerabilityId)!;
+  }
+
+  getReport(vulnerabilityId: number): Report | null {
+    const row = this.db
+      .prepare('SELECT * FROM reports WHERE vulnerability_id = ?')
+      .get(vulnerabilityId) as ReportRow | undefined;
+    return row ? mapReport(row) : null;
+  }
+
+  appendActivity(
+    type: ActivityItem['type'],
+    message: string,
+    severity: string | null = null,
+    scanId?: number,
+    vulnerabilityId?: number,
+  ): ActivityItem {
     const result = this.db
       .prepare('INSERT INTO activities (type, message, severity, scan_id, vulnerability_id) VALUES (?, ?, ?, ?, ?)')
       .run(type, message, severity, scanId ?? null, vulnerabilityId ?? null);
@@ -394,24 +478,30 @@ export class SentinelStore {
 
   getDashboardStats(): DashboardStats {
     const totalScans = (this.db.prepare('SELECT COUNT(*) AS count FROM scans').get() as { count: number }).count;
-    const activeScans = (this.db.prepare("SELECT COUNT(*) AS count FROM scans WHERE status = 'running'").get() as { count: number }).count;
+    const activeScans = (
+      this.db.prepare("SELECT COUNT(*) AS count FROM scans WHERE status = 'running'").get() as { count: number }
+    ).count;
     const totalTargets = (this.db.prepare('SELECT COUNT(*) AS count FROM targets').get() as { count: number }).count;
-    const totalVulnerabilities = (this.db.prepare('SELECT COUNT(*) AS count FROM vulnerabilities').get() as { count: number }).count;
+    const totalVulnerabilities = (
+      this.db.prepare('SELECT COUNT(*) AS count FROM vulnerabilities').get() as { count: number }
+    ).count;
     const verifiedVulnerabilities = (
       this.db.prepare("SELECT COUNT(*) AS count FROM vulnerabilities WHERE status IN ('verified', 'reported')").get() as {
         count: number;
       }
     ).count;
     const criticalCount = (
-      this.db.prepare("SELECT COUNT(*) AS count FROM vulnerabilities WHERE severity = 'critical'").get() as { count: number }
+      this.db.prepare("SELECT COUNT(*) AS count FROM vulnerabilities WHERE severity = 'critical'").get() as {
+        count: number;
+      }
     ).count;
     const highCount = (
       this.db.prepare("SELECT COUNT(*) AS count FROM vulnerabilities WHERE severity = 'high'").get() as { count: number }
     ).count;
     const payoutPotential = (
-      this.db.prepare("SELECT COALESCE(SUM(estimated_payout), 0) AS total FROM vulnerabilities WHERE status IN ('verified', 'reported')").get() as {
-        total: number;
-      }
+      this.db
+        .prepare("SELECT COALESCE(SUM(estimated_payout), 0) AS total FROM vulnerabilities WHERE status IN ('verified', 'reported')")
+        .get() as { total: number }
     ).total;
     const recentActivity = (
       this.db.prepare('SELECT id, type, message, timestamp, severity FROM activities ORDER BY id DESC LIMIT 12').all() as unknown as ActivityItem[]
@@ -442,9 +532,9 @@ export class SentinelStore {
 
   getPayoutPotential(): PayoutPotential {
     const total = (
-      this.db.prepare("SELECT COALESCE(SUM(estimated_payout), 0) AS total FROM vulnerabilities WHERE status IN ('verified', 'reported')").get() as {
-        total: number;
-      }
+      this.db
+        .prepare("SELECT COALESCE(SUM(estimated_payout), 0) AS total FROM vulnerabilities WHERE status IN ('verified', 'reported')")
+        .get() as { total: number }
     ).total;
     const byTarget = this.db
       .prepare(

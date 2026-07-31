@@ -6,10 +6,10 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --parallel --filter @sentinel-x/api --filter @sentinel-x/dashboard dev",
-    "build": "pnpm -r build",
-    "test": "pnpm -r test",
-    "check": "pnpm -r check",
-    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm -r --workspace-concurrency=1 build",
+    "test": "pnpm -r --workspace-concurrency=1 test",
+    "check": "pnpm -r --workspace-concurrency=1 check",
+    "typecheck": "pnpm -r --workspace-concurrency=1 typecheck",
     "pack:check": "pnpm --filter @sentinel-x/contracts pack:check && pnpm --filter @sentinel-x/agent pack:check"
   },
   "keywords": [
@@ -28,5 +28,10 @@
   "engines": {
     "node": ">=22"
   },
-  "packageManager": "pnpm@10.33.3"
+  "packageManager": "pnpm@10.33.3",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
 }

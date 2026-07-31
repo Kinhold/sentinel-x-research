@@ -1,17 +1,28 @@
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import test from 'node:test';
+import { ScanRunner } from '@sentinel-x/agent';
+import { createDatabase, SentinelStore } from '@sentinel-x/storage';
 import { request } from './request.js';
 import { createApp } from '../src/server.js';
 
+const fixturesDir = join(import.meta.dirname, '../../../fixtures/repos');
+
+function testApp() {
+  const store = new SentinelStore(createDatabase());
+  const runner = new ScanRunner(store, { fixturesDir, allowClone: false });
+  return createApp({ store, runner, fixturesDir, apiKey: null });
+}
+
 test('health check responds ok', async () => {
-  const app = createApp();
+  const app = testApp();
   const response = await request(app, '/api/healthz');
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { status: 'ok' });
 });
 
 test('target and scan lifecycle', async () => {
-  const app = createApp();
+  const app = testApp();
   const targetResponse = await request(app, '/api/targets', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -36,10 +47,27 @@ test('target and scan lifecycle', async () => {
     const body = (await current.json()) as { status: string };
     return body.status === 'completed' || body.status === 'failed';
   }, 8000);
+  const completed = await request(app, `/api/scans/${scan.id}`);
+  const completedBody = (await completed.json()) as { status: string; sourceMode?: string };
+  assert.equal(completedBody.status, 'completed');
+  assert.equal(completedBody.sourceMode, 'fixture');
   const statsResponse = await request(app, '/api/stats/dashboard');
   assert.equal(statsResponse.status, 200);
-  const stats = (await statsResponse.json()) as { totalScans: number };
+  const stats = (await statsResponse.json()) as { totalScans: number; verifiedVulnerabilities: number };
   assert.ok(stats.totalScans >= 1);
+  assert.ok(stats.verifiedVulnerabilities >= 1);
+});
+
+test('API key auth rejects missing credentials', async () => {
+  const store = new SentinelStore(createDatabase());
+  const runner = new ScanRunner(store, { fixturesDir, allowClone: false });
+  const app = createApp({ store, runner, fixturesDir, apiKey: 'secret' });
+  const denied = await request(app, '/api/targets');
+  assert.equal(denied.status, 401);
+  const allowed = await request(app, '/api/targets', {
+    headers: { 'x-api-key': 'secret' },
+  });
+  assert.equal(allowed.status, 200);
 });
 
 async function waitFor(predicate: () => Promise<boolean>, timeoutMs: number): Promise<void> {

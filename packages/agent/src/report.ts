@@ -1,4 +1,4 @@
-import type { DiscoveryFinding, Report, Vulnerability } from '@sentinel-x/contracts';
+import type { DiscoveryFinding, Report, Vulnerability, VulnerabilityType } from '@sentinel-x/contracts';
 
 export interface VerificationResult {
   status: 'verified' | 'false_positive';
@@ -8,19 +8,27 @@ export interface VerificationResult {
   counterExample?: string | null;
 }
 
+const MIN_SNIPPET = 8;
+const VERIFY_FLOOR = 0.62;
+
 export function verifyFinding(finding: DiscoveryFinding): VerificationResult {
   const harness = buildHarness(finding);
-  const hasConcreteSnippet = Boolean(finding.pocCode && finding.pocCode.trim().length > 8);
-  const highConfidence = finding.confidenceScore >= 0.7;
-  const verified = hasConcreteSnippet && highConfidence;
+  const hasConcreteSnippet = Boolean(finding.pocCode && finding.pocCode.trim().length >= MIN_SNIPPET);
+  const hasLocation = Boolean(finding.affectedFile && finding.lineNumber);
+  const hasRule = Boolean(finding.ruleId || finding.fingerprint);
+  const structural = [hasConcreteSnippet, hasLocation, hasRule].filter(Boolean).length;
+  const highConfidence = finding.confidenceScore >= VERIFY_FLOOR;
+  const verified = highConfidence && structural >= 2;
 
   return {
     status: verified ? 'verified' : 'false_positive',
-    confidenceScore: verified ? Math.min(0.95, finding.confidenceScore + 0.08) : Math.max(0.2, finding.confidenceScore - 0.25),
+    confidenceScore: verified
+      ? Math.min(0.97, finding.confidenceScore + 0.06 + structural * 0.01)
+      : Math.max(0.15, finding.confidenceScore - 0.22),
     fvHarness: harness,
     fvLog: verified
-      ? 'Counterexample search exhausted for bounded input domain; witness lane remains reproducible from captured snippet.'
-      : 'Heuristic signal did not survive verification harness; downgraded to false positive.',
+      ? `Bounded defensive verification accepted finding (structural=${structural}/3, rule=${finding.ruleId ?? 'n/a'}). Operator must validate on live scope.`
+      : `Finding failed structural/confidence gate (structural=${structural}/3). Downgraded to false positive.`,
     counterExample: verified ? finding.pocCode ?? null : null,
   };
 }
@@ -28,11 +36,15 @@ export function verifyFinding(finding: DiscoveryFinding): VerificationResult {
 function buildHarness(finding: DiscoveryFinding): string {
   return [
     '# Sentinel-X defensive verification harness',
-    `target_language: ${finding.vulnType}`,
+    `rule_id: ${finding.ruleId ?? 'legacy'}`,
+    `fingerprint: ${finding.fingerprint ?? 'n/a'}`,
+    `vuln_type: ${finding.vulnType}`,
     `assertion: ${finding.title}`,
     `file: ${finding.affectedFile ?? 'unknown'}`,
+    `line: ${finding.lineNumber ?? 'unknown'}`,
     `function: ${finding.affectedFunction ?? 'unknown'}`,
-    'mode: bounded-symbolic',
+    'mode: bounded-structural',
+    'policy: never auto-submit to bounty platforms',
   ].join('\n');
 }
 
@@ -47,9 +59,14 @@ export function buildImmunefiReport(vulnerability: Vulnerability): Report {
     `- Severity: **${vulnerability.severity}**`,
     `- Type: \`${vulnerability.vulnType}\``,
     `- Target language: \`${vulnerability.targetLanguage}\``,
+    vulnerability.ruleId ? `- Rule: \`${vulnerability.ruleId}\`` : null,
+    vulnerability.fingerprint ? `- Fingerprint: \`${vulnerability.fingerprint}\`` : null,
     vulnerability.affectedFile ? `- Affected file: \`${vulnerability.affectedFile}\`` : null,
     vulnerability.affectedFunction ? `- Affected function: \`${vulnerability.affectedFunction}\`` : null,
     vulnerability.lineNumber ? `- Line: ${vulnerability.lineNumber}` : null,
+    vulnerability.confidenceScore != null
+      ? `- Confidence: ${(vulnerability.confidenceScore * 100).toFixed(1)}%`
+      : null,
     '',
     '## Impact',
     impactFor(vulnerability.severity),
@@ -98,7 +115,7 @@ function impactFor(severity: Vulnerability['severity']): string {
   }
 }
 
-function recommendationFor(vulnType: Vulnerability['vulnType']): string {
+function recommendationFor(vulnType: VulnerabilityType): string {
   switch (vulnType) {
     case 'under_constrained_circuit':
       return 'Bind every private witness to public claims with explicit assertions and negative tests.';
@@ -108,6 +125,12 @@ function recommendationFor(vulnType: Vulnerability['vulnType']): string {
       return 'Constrain CPI targets with signer, owner, and has_one checks before invocation.';
     case 'uninitialized_account':
       return 'Require payer, space, and seed bindings on every init path.';
+    case 'reentrancy':
+      return 'Complete state updates before CPI, or use checks-effects-interactions with reentrancy guards.';
+    case 'access_control':
+      return 'Enforce signer/owner constraints and document unsafe invariants with adversarial tests.';
+    case 'arithmetic_error':
+      return 'Guard denominators and prove domain constraints before Field division.';
     default:
       return 'Add explicit invariants, negative tests, and independent review before mainnet or bounty submission.';
   }
