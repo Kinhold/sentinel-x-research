@@ -13,6 +13,14 @@ export {
   ScanQueue,
   runVerificationAdapters,
   aggregateAdapterBoost,
+  fuseConfidence,
+  structuralEvidenceScore,
+  applyRulePack,
+  loadRulePack,
+  mergeFindings,
+  applyScopeFirewall,
+  matchGlob,
+  filterToChanged,
 } from './pipeline.js';
 export type { ScanRunnerOptions, ScanQueueOptions } from './pipeline.js';
 export { analyzeRustSources } from './rust.js';

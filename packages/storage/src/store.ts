@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
   ActivityItem,
   CreateTargetBody,
@@ -587,5 +588,180 @@ export class SentinelStore {
   private estimatePayout(severity: VulnerabilitySeverity, maxPayout: number | null): number | null {
     if (maxPayout === null) return null;
     return Math.round(maxPayout * SEVERITY_PAYOUT_WEIGHT[severity] * 100) / 100;
+  }
+
+  appendProvenance(scanId: number, event: string, payload: unknown): {
+    seq: number;
+    entryHash: string;
+    prevHash: string | null;
+  } {
+    const last = this.db
+      .prepare('SELECT seq, entry_hash FROM provenance WHERE scan_id = ? ORDER BY seq DESC LIMIT 1')
+      .get(scanId) as { seq: number; entry_hash: string } | undefined;
+    const seq = (last?.seq ?? 0) + 1;
+    const prevHash = last?.entry_hash ?? null;
+    const payloadJson = JSON.stringify(payload);
+    const entryHash = createHash('sha256')
+      .update([String(scanId), String(seq), event, payloadJson, prevHash ?? ''].join('|'))
+      .digest('hex');
+    this.db
+      .prepare(
+        `INSERT INTO provenance (scan_id, seq, event, payload_json, prev_hash, entry_hash)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(scanId, seq, event, payloadJson, prevHash, entryHash);
+    return { seq, entryHash, prevHash };
+  }
+
+  listProvenance(scanId: number): Array<{
+    seq: number;
+    event: string;
+    payload: unknown;
+    prevHash: string | null;
+    entryHash: string;
+    createdAt: string;
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT seq, event, payload_json, prev_hash, entry_hash, created_at
+         FROM provenance WHERE scan_id = ? ORDER BY seq ASC`,
+      )
+      .all(scanId) as Array<{
+      seq: number;
+      event: string;
+      payload_json: string;
+      prev_hash: string | null;
+      entry_hash: string;
+      created_at: string;
+    }>;
+    return rows.map((row) => ({
+      seq: row.seq,
+      event: row.event,
+      payload: JSON.parse(row.payload_json) as unknown,
+      prevHash: row.prev_hash,
+      entryHash: row.entry_hash,
+      createdAt: row.created_at,
+    }));
+  }
+
+  verifyProvenanceChain(scanId: number): boolean {
+    const entries = this.listProvenance(scanId);
+    let prevHash: string | null = null;
+    for (const entry of entries) {
+      if (entry.prevHash !== prevHash) return false;
+      const material = [String(scanId), String(entry.seq), entry.event, JSON.stringify(entry.payload), prevHash ?? ''].join(
+        '|',
+      );
+      const expectedHash: string = createHash('sha256').update(material).digest('hex');
+      if (expectedHash !== entry.entryHash) return false;
+      prevHash = entry.entryHash;
+    }
+    return true;
+  }
+
+  appendAudit(event: {
+    actor?: string;
+    action: string;
+    resourceType?: string;
+    resourceId?: string;
+    detail?: string;
+    requestId?: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO audit_events (actor, action, resource_type, resource_id, detail, request_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        event.actor ?? 'operator',
+        event.action,
+        event.resourceType ?? null,
+        event.resourceId ?? null,
+        event.detail ?? null,
+        event.requestId ?? null,
+      );
+  }
+
+  listAuditEvents(limit = 50): Array<{
+    id: number;
+    actor: string;
+    action: string;
+    resourceType: string | null;
+    resourceId: string | null;
+    detail: string | null;
+    requestId: string | null;
+    createdAt: string;
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, actor, action, resource_type, resource_id, detail, request_id, created_at
+         FROM audit_events ORDER BY id DESC LIMIT ?`,
+      )
+      .all(limit) as Array<{
+      id: number;
+      actor: string;
+      action: string;
+      resource_type: string | null;
+      resource_id: string | null;
+      detail: string | null;
+      request_id: string | null;
+      created_at: string;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      actor: row.actor,
+      action: row.action,
+      resourceType: row.resource_type,
+      resourceId: row.resource_id,
+      detail: row.detail,
+      requestId: row.request_id,
+      createdAt: row.created_at,
+    }));
+  }
+
+  getRuleFalsePositiveRate(ruleId: string): number | null {
+    const row = this.db
+      .prepare(
+        `SELECT
+           SUM(CASE WHEN status = 'false_positive' THEN 1 ELSE 0 END) AS fp,
+           COUNT(*) AS total
+         FROM vulnerabilities
+         WHERE rule_id = ?`,
+      )
+      .get(ruleId) as { fp: number; total: number } | undefined;
+    if (!row || row.total < 3) return null;
+    return row.fp / row.total;
+  }
+
+  getLastCompletedCommit(targetId: number): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT source_commit FROM scans
+         WHERE target_id = ? AND status = 'completed' AND source_commit IS NOT NULL
+         ORDER BY id DESC LIMIT 1`,
+      )
+      .get(targetId) as { source_commit: string | null } | undefined;
+    return row?.source_commit ?? null;
+  }
+
+  getMetricsSnapshot(): {
+    scansTotal: number;
+    scansActive: number;
+    scansFailed: number;
+    vulnsTotal: number;
+    vulnsVerified: number;
+    vulnsFalsePositive: number;
+    targetsTotal: number;
+  } {
+    const q = (sql: string) => (this.db.prepare(sql).get() as { count: number }).count;
+    return {
+      scansTotal: q('SELECT COUNT(*) AS count FROM scans'),
+      scansActive: q("SELECT COUNT(*) AS count FROM scans WHERE status = 'running'"),
+      scansFailed: q("SELECT COUNT(*) AS count FROM scans WHERE status = 'failed'"),
+      vulnsTotal: q('SELECT COUNT(*) AS count FROM vulnerabilities'),
+      vulnsVerified: q("SELECT COUNT(*) AS count FROM vulnerabilities WHERE status IN ('verified', 'reported')"),
+      vulnsFalsePositive: q("SELECT COUNT(*) AS count FROM vulnerabilities WHERE status = 'false_positive'"),
+      targetsTotal: q('SELECT COUNT(*) AS count FROM targets'),
+    };
   }
 }

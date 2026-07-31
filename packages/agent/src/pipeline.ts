@@ -18,6 +18,8 @@ export interface ScanRunnerOptions extends IngestOptions {
   injectPauseMs?: number;
   enableToolAdapters?: boolean;
   dedupeFingerprints?: boolean;
+  includeDeclarativePacks?: boolean;
+  scope?: import('./scope.js').ScopePolicy;
 }
 
 export class ScanRunner {
@@ -89,8 +91,23 @@ export class ScanRunner {
       );
 
       checkpoint();
-      const findings = analyzeFixtureDirectory(workspace.path, target.language);
-      log('discovery', 'info', `Discovery complete: ${findings.length} candidate findings`);
+      const previousCommit = this.store.getLastCompletedCommit(target.id);
+      const findings = analyzeFixtureDirectory(workspace.path, target.language, {
+        differentialSinceCommit: previousCommit && workspace.commit ? previousCommit : null,
+        scope: this.options.scope,
+        includeDeclarativePacks: this.options.includeDeclarativePacks,
+      });
+      this.store.appendProvenance(scanId, 'discovery.complete', {
+        findingCount: findings.length,
+        mode: workspace.mode,
+        commit: workspace.commit,
+        differentialSince: previousCommit,
+      });
+      log(
+        'discovery',
+        'info',
+        `Discovery complete: ${findings.length} candidate findings${previousCommit ? ` (diff since ${previousCommit.slice(0, 8)})` : ''}`,
+      );
 
       let bugsFound = 0;
       let bugsVerified = 0;
@@ -128,8 +145,27 @@ export class ScanRunner {
         const adapterLog = adapters.length
           ? adapters.map((item) => `${item.tool}=${item.ran ? item.exitCode ?? 'ran' : 'skip'}`).join(', ')
           : undefined;
+        const historicalFpRate = finding.ruleId
+          ? this.store.getRuleFalsePositiveRate(finding.ruleId) ?? undefined
+          : undefined;
+        const priorVerifiedSameFingerprint = Boolean(
+          finding.fingerprint && this.store.findVerifiedByFingerprint(finding.fingerprint, target.id),
+        );
 
-        const verification = verifyFinding(finding, { adapterBoost, adapterLog });
+        const verification = verifyFinding(finding, {
+          adapterBoost,
+          adapterLog,
+          adapters,
+          historicalFpRate,
+          priorVerifiedSameFingerprint,
+        });
+        this.store.appendProvenance(scanId, 'verification.result', {
+          vulnerabilityId: vulnerability.id,
+          ruleId: finding.ruleId,
+          status: verification.status,
+          confidence: verification.confidenceScore,
+          lattice: verification.latticeRationale,
+        });
         const updated = this.store.updateVulnerabilityVerification(vulnerability.id, {
           status: verification.status,
           fvHarness: verification.fvHarness,
@@ -181,6 +217,12 @@ export class ScanRunner {
         completedAt: new Date().toISOString(),
         bugsFound,
         bugsVerified,
+      });
+      this.store.appendProvenance(scanId, 'scan.completed', {
+        bugsFound,
+        bugsVerified,
+        duplicatesSkipped,
+        chainValid: this.store.verifyProvenanceChain(scanId),
       });
       this.store.appendActivity(
         'scan_completed',
@@ -240,6 +282,9 @@ export { buildSarifReport } from './sarif.js';
 export { ScanQueue } from './queue.js';
 export type { ScanQueueOptions } from './queue.js';
 export { runVerificationAdapters, aggregateAdapterBoost } from './verify-adapters.js';
+export { fuseConfidence, structuralEvidenceScore } from './lattice.js';
+export { applyRulePack, loadRulePack, mergeFindings } from './rules/engine.js';
+export { applyScopeFirewall, matchGlob, filterToChanged } from './scope.js';
 
 function sleep(ms: number, signal: AbortSignal, reason?: () => string | undefined): Promise<void> {
   return new Promise((resolve, reject) => {

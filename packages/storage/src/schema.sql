@@ -84,3 +84,29 @@ CREATE INDEX IF NOT EXISTS idx_vulnerabilities_status ON vulnerabilities(status)
 CREATE INDEX IF NOT EXISTS idx_vulnerabilities_severity ON vulnerabilities(severity);
 CREATE INDEX IF NOT EXISTS idx_vulnerabilities_fingerprint ON vulnerabilities(fingerprint);
 CREATE INDEX IF NOT EXISTS idx_scan_logs_scan_id ON scan_logs(scan_id);
+
+CREATE TABLE IF NOT EXISTS provenance (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scan_id INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
+  event TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  prev_hash TEXT,
+  entry_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(scan_id, seq)
+);
+
+CREATE TABLE IF NOT EXISTS audit_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  actor TEXT NOT NULL DEFAULT 'operator',
+  action TEXT NOT NULL,
+  resource_type TEXT,
+  resource_id TEXT,
+  detail TEXT,
+  request_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_provenance_scan_id ON provenance(scan_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at);

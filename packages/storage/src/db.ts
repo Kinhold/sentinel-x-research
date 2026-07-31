@@ -43,6 +43,31 @@ function migrate(db: DatabaseSync): void {
       generated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS provenance (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scan_id INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+      seq INTEGER NOT NULL,
+      event TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      prev_hash TEXT,
+      entry_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(scan_id, seq)
+    );
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS audit_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      actor TEXT NOT NULL DEFAULT 'operator',
+      action TEXT NOT NULL,
+      resource_type TEXT,
+      resource_id TEXT,
+      detail TEXT,
+      request_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
 }
 
 export type SentinelDatabase = DatabaseSync;

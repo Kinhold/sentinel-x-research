@@ -127,6 +127,19 @@ export function App() {
           >
             Export SARIF
           </button>
+          <button
+            className="btn ghost"
+            type="button"
+            onClick={() => {
+              void Promise.all([client.metrics(), selectedScan != null ? client.provenance(selectedScan) : null]).then(
+                ([metrics, provenance]) => {
+                  setReport(JSON.stringify({ metrics, provenance }, null, 2));
+                },
+              );
+            }}
+          >
+            Lattice / provenance
+          </button>
         </div>
       </header>
 

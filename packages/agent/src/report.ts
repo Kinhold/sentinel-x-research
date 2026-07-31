@@ -1,4 +1,6 @@
 import type { DiscoveryFinding, Report, Vulnerability, VulnerabilityType } from '@sentinel-x/contracts';
+import { fuseConfidence, structuralEvidenceScore } from './lattice.js';
+import type { ToolAdapterResult } from './verify-adapters.js';
 
 export interface VerificationResult {
   status: 'verified' | 'false_positive';
@@ -6,35 +8,45 @@ export interface VerificationResult {
   fvHarness: string;
   fvLog: string;
   counterExample?: string | null;
+  latticeRationale?: string;
 }
 
-const MIN_SNIPPET = 8;
 const VERIFY_FLOOR = 0.62;
 
 export function verifyFinding(
   finding: DiscoveryFinding,
-  options: { adapterBoost?: number; adapterLog?: string } = {},
+  options: {
+    adapterBoost?: number;
+    adapterLog?: string;
+    adapters?: ToolAdapterResult[];
+    historicalFpRate?: number;
+    priorVerifiedSameFingerprint?: boolean;
+  } = {},
 ): VerificationResult {
   const harness = buildHarness(finding);
-  const hasConcreteSnippet = Boolean(finding.pocCode && finding.pocCode.trim().length >= MIN_SNIPPET);
-  const hasLocation = Boolean(finding.affectedFile && finding.lineNumber);
-  const hasRule = Boolean(finding.ruleId || finding.fingerprint);
-  const structural = [hasConcreteSnippet, hasLocation, hasRule].filter(Boolean).length;
-  const boostedConfidence = Math.min(0.99, finding.confidenceScore + (options.adapterBoost ?? 0));
-  const highConfidence = boostedConfidence >= VERIFY_FLOOR;
-  const verified = highConfidence && structural >= 2;
+  const structural = structuralEvidenceScore(finding);
+  const lattice = fuseConfidence({
+    finding,
+    structuralScore: structural,
+    adapterBoost: options.adapterBoost ?? 0,
+    adapters: options.adapters,
+    historicalFpRate: options.historicalFpRate,
+    priorVerifiedSameFingerprint: options.priorVerifiedSameFingerprint,
+  });
+  const verified = lattice.confidence >= VERIFY_FLOOR && structural >= 2;
   const adapterNote = options.adapterLog ? ` Adapters: ${options.adapterLog}` : '';
 
   return {
     status: verified ? 'verified' : 'false_positive',
     confidenceScore: verified
-      ? Math.min(0.97, boostedConfidence + 0.06 + structural * 0.01)
-      : Math.max(0.15, boostedConfidence - 0.22),
+      ? Math.min(0.97, lattice.confidence + 0.04)
+      : Math.max(0.12, lattice.confidence - 0.18),
     fvHarness: harness,
     fvLog: verified
-      ? `Bounded defensive verification accepted finding (structural=${structural}/3, rule=${finding.ruleId ?? 'n/a'}).${adapterNote} Operator must validate on live scope.`
-      : `Finding failed structural/confidence gate (structural=${structural}/3).${adapterNote} Downgraded to false positive.`,
+      ? `Lattice verification accepted (structural=${structural}/3, ${lattice.rationale}).${adapterNote} Operator must validate on live scope.`
+      : `Lattice verification rejected (structural=${structural}/3, ${lattice.rationale}).${adapterNote} Downgraded to false positive.`,
     counterExample: verified ? finding.pocCode ?? null : null,
+    latticeRationale: lattice.rationale,
   };
 }
 
@@ -48,7 +60,7 @@ function buildHarness(finding: DiscoveryFinding): string {
     `file: ${finding.affectedFile ?? 'unknown'}`,
     `line: ${finding.lineNumber ?? 'unknown'}`,
     `function: ${finding.affectedFunction ?? 'unknown'}`,
-    'mode: bounded-structural',
+    'mode: confidence-lattice',
     'policy: never auto-submit to bounty platforms',
   ].join('\n');
 }

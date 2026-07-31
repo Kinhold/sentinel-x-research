@@ -41,6 +41,9 @@ export const client = {
   report: (vulnerabilityId: number) => api<Report>(`/api/reports/${vulnerabilityId}`),
   sarif: (scanId?: number) =>
     api<unknown>(`/api/exports/sarif${scanId != null ? `?scanId=${scanId}` : ''}`),
+  metrics: () => api<Record<string, unknown>>('/api/metrics'),
+  provenance: (scanId: number) =>
+    api<{ scanId: number; chainValid: boolean; entries: unknown[] }>(`/api/provenance/${scanId}`),
 };
 
 export type TargetLanguage = 'rust' | 'noir' | 'solana';

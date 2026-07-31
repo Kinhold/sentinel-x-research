@@ -158,6 +158,12 @@ export function createApp(options: AppOptions = {}): Express {
     try {
       const body = parseCreateScanBody(req.body);
       const scan = store.createScan(body.targetId);
+      store.appendAudit({
+        action: 'scan.create',
+        resourceType: 'scan',
+        resourceId: String(scan.id),
+        requestId: req.requestId,
+      });
       queue.enqueue(scan.id);
       res.status(201).json(scan);
     } catch (error) {
@@ -224,6 +230,13 @@ export function createApp(options: AppOptions = {}): Express {
         res.status(404).json({ error: 'Vulnerability not found', requestId: req.requestId, code: 'not_found' });
         return;
       }
+      store.appendAudit({
+        action: 'vulnerability.status',
+        resourceType: 'vulnerability',
+        resourceId: String(vulnerability.id),
+        detail: body.status,
+        requestId: req.requestId,
+      });
       res.json(vulnerability);
     } catch (error) {
       next(error);
@@ -251,6 +264,57 @@ export function createApp(options: AppOptions = {}): Express {
       scanId: Number.isInteger(scanId) ? scanId : undefined,
     });
     res.json(buildSarifReport({ vulnerabilities }));
+  });
+
+  app.get('/api/metrics', (req, res) => {
+    const snap = store.getMetricsSnapshot();
+    const queueSize = queue.size();
+    if (req.query.format === 'prometheus') {
+      const lines = [
+        `# HELP sentinel_scans_total Total scans`,
+        `# TYPE sentinel_scans_total counter`,
+        `sentinel_scans_total ${snap.scansTotal}`,
+        `# HELP sentinel_scans_active Active scans`,
+        `# TYPE sentinel_scans_active gauge`,
+        `sentinel_scans_active ${snap.scansActive}`,
+        `# HELP sentinel_scans_failed Failed scans`,
+        `# TYPE sentinel_scans_failed counter`,
+        `sentinel_scans_failed ${snap.scansFailed}`,
+        `# HELP sentinel_vulns_total Total vulnerabilities`,
+        `# TYPE sentinel_vulns_total counter`,
+        `sentinel_vulns_total ${snap.vulnsTotal}`,
+        `# HELP sentinel_vulns_verified Verified vulnerabilities`,
+        `# TYPE sentinel_vulns_verified counter`,
+        `sentinel_vulns_verified ${snap.vulnsVerified}`,
+        `# HELP sentinel_queue_pending Pending queue depth`,
+        `# TYPE sentinel_queue_pending gauge`,
+        `sentinel_queue_pending ${queueSize.pending}`,
+        `# HELP sentinel_queue_active Active queue workers`,
+        `# TYPE sentinel_queue_active gauge`,
+        `sentinel_queue_active ${queueSize.active}`,
+      ];
+      res.type('text/plain').send(lines.join('\n') + '\n');
+      return;
+    }
+    res.json({ ...snap, queue: queueSize });
+  });
+
+  app.get('/api/provenance/:scanId', (req, res) => {
+    const scanId = Number(req.params.scanId);
+    if (!store.getScan(scanId)) {
+      res.status(404).json({ error: 'Scan not found', requestId: req.requestId, code: 'not_found' });
+      return;
+    }
+    res.json({
+      scanId,
+      chainValid: store.verifyProvenanceChain(scanId),
+      entries: store.listProvenance(scanId),
+    });
+  });
+
+  app.get('/api/audit', (req, res) => {
+    const limit = req.query.limit ? Number(req.query.limit) : 50;
+    res.json(store.listAuditEvents(Number.isFinite(limit) ? limit : 50));
   });
 
   app.get('/api/stats/dashboard', (_req, res) => {

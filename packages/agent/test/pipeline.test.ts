@@ -26,6 +26,8 @@ test('ScanRunner completes an end-to-end noir scan and persists reports', async 
   assert.ok(verified.length > 0);
   assert.ok(verified[0]?.ruleId);
   assert.ok(store.getReport(verified[0]!.id));
+  assert.equal(store.verifyProvenanceChain(scan.id), true);
+  assert.ok(store.listProvenance(scan.id).length >= 2);
 });
 
 test('ScanRunner cancel aborts an in-flight scan', async () => {

@@ -4,6 +4,15 @@ import type { DiscoveryFinding, TargetLanguage } from '@sentinel-x/contracts';
 import { analyzeNoirSources } from './noir.js';
 import { analyzeRustSources } from './rust.js';
 import { analyzeSolanaSources } from './solana.js';
+import { applyRulePack, loadRulePack, mergeFindings } from './rules/engine.js';
+import corePack from './rules/sentinel-core.json' with { type: 'json' };
+import {
+  applyScopeFirewall,
+  filterToChanged,
+  listChangedFiles,
+  type ScopePolicy,
+} from './scope.js';
+import type { SourceFile } from './ir.js';
 
 const SOURCE_EXTENSIONS: Record<TargetLanguage, string[]> = {
   rust: ['.rs'],
@@ -11,9 +20,17 @@ const SOURCE_EXTENSIONS: Record<TargetLanguage, string[]> = {
   solana: ['.rs', '.ts', '.js'],
 };
 
-export function collectSourceFiles(rootDir: string, language: TargetLanguage): Array<{ path: string; content: string }> {
+const loadedCorePack = loadRulePack(corePack as Parameters<typeof loadRulePack>[0]);
+
+export interface AnalyzeOptions {
+  scope?: ScopePolicy;
+  differentialSinceCommit?: string | null;
+  includeDeclarativePacks?: boolean;
+}
+
+export function collectSourceFiles(rootDir: string, language: TargetLanguage): SourceFile[] {
   const extensions = new Set(SOURCE_EXTENSIONS[language]);
-  const files: Array<{ path: string; content: string }> = [];
+  const files: SourceFile[] = [];
 
   function walk(current: string, relative = ''): void {
     for (const entry of readdirSync(current)) {
@@ -21,7 +38,7 @@ export function collectSourceFiles(rootDir: string, language: TargetLanguage): A
       const relPath = relative ? `${relative}/${entry}` : entry;
       const stats = statSync(fullPath);
       if (stats.isDirectory()) {
-        if (entry === 'node_modules' || entry === 'target' || entry === '.git') continue;
+        if (entry === 'node_modules' || entry === 'target' || entry === '.git' || entry === 'dist') continue;
         walk(fullPath, relPath);
         continue;
       }
@@ -35,20 +52,35 @@ export function collectSourceFiles(rootDir: string, language: TargetLanguage): A
   return files;
 }
 
-export function analyzeSources(language: TargetLanguage, files: Array<{ path: string; content: string }>): DiscoveryFinding[] {
-  switch (language) {
-    case 'rust':
-      return analyzeRustSources(files);
-    case 'noir':
-      return analyzeNoirSources(files);
-    case 'solana':
-      return analyzeSolanaSources(files);
-    default:
-      return [];
-  }
+export function analyzeSources(
+  language: TargetLanguage,
+  files: SourceFile[],
+  options: AnalyzeOptions = {},
+): DiscoveryFinding[] {
+  const scoped = applyScopeFirewall(files, options.scope);
+  const specialized =
+    language === 'rust'
+      ? analyzeRustSources(scoped)
+      : language === 'noir'
+        ? analyzeNoirSources(scoped)
+        : language === 'solana'
+          ? analyzeSolanaSources(scoped)
+          : [];
+
+  if (options.includeDeclarativePacks === false) return specialized;
+  const declarative = applyRulePack(loadedCorePack, language, scoped);
+  return mergeFindings(specialized, declarative);
 }
 
-export function analyzeFixtureDirectory(rootDir: string, language: TargetLanguage): DiscoveryFinding[] {
-  const files = collectSourceFiles(rootDir, language);
-  return analyzeSources(language, files);
+export function analyzeFixtureDirectory(
+  rootDir: string,
+  language: TargetLanguage,
+  options: AnalyzeOptions = {},
+): DiscoveryFinding[] {
+  let files = collectSourceFiles(rootDir, language);
+  if (options.differentialSinceCommit) {
+    const changed = listChangedFiles(rootDir, options.differentialSinceCommit);
+    files = filterToChanged(files, changed);
+  }
+  return analyzeSources(language, files, options);
 }

@@ -105,6 +105,17 @@ test('SARIF export returns tool driver and results', async () => {
   assert.equal(sarif.version, '2.1.0');
   assert.equal(sarif.runs[0]?.tool.driver.name, 'Sentinel-X');
   assert.ok((sarif.runs[0]?.results.length ?? 0) >= 1);
+
+  const metrics = await request(app, '/api/metrics');
+  assert.equal(metrics.status, 200);
+  const metricsBody = (await metrics.json()) as { scansTotal: number; queue: { pending: number } };
+  assert.ok(metricsBody.scansTotal >= 1);
+
+  const provenance = await request(app, `/api/provenance/${scan.id}`);
+  assert.equal(provenance.status, 200);
+  const provBody = (await provenance.json()) as { chainValid: boolean; entries: unknown[] };
+  assert.equal(provBody.chainValid, true);
+  assert.ok(provBody.entries.length >= 1);
 });
 
 async function waitFor(predicate: () => Promise<boolean>, timeoutMs: number): Promise<void> {

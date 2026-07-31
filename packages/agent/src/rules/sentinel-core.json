@@ -1,0 +1,55 @@
+{
+  "id": "sentinel-core",
+  "version": "1.0.0",
+  "rules": [
+    {
+      "id": "rust.expect-panic",
+      "language": "rust",
+      "title": "expect() panic lane",
+      "description": "expect() converts recoverable failure into an abort. Prefer typed error propagation in protocol code.",
+      "severity": "low",
+      "vulnType": "other",
+      "pattern": "\\.expect\\s*\\(",
+      "unless": "\\b#\\[cfg\\(test\\)\\]|mod\\s+tests",
+      "confidence": 0.5,
+      "cwe": "755"
+    },
+    {
+      "id": "rust.todo-macro",
+      "language": "rust",
+      "title": "todo!/unimplemented! in non-test path",
+      "description": "Unfinished code paths can abort at runtime under production traffic.",
+      "severity": "medium",
+      "vulnType": "other",
+      "pattern": "\\b(todo!|unimplemented!)\\s*\\(",
+      "unless": "\\b#\\[cfg\\(test\\)\\]|mod\\s+tests",
+      "confidence": 0.7,
+      "cwe": "670"
+    },
+    {
+      "id": "noir.assert-message-only",
+      "language": "noir",
+      "title": "assert with message-only shape risk",
+      "description": "Bare assert(true)-style patterns do not constrain witnesses. Confirm the predicate binds private inputs.",
+      "severity": "informational",
+      "vulnType": "under_constrained_circuit",
+      "pattern": "\\bassert\\s*\\(\\s*true\\s*[,)]",
+      "confidence": 0.55,
+      "cwe": "345"
+    },
+    {
+      "id": "solana.unchecked-account",
+      "language": "solana",
+      "title": "AccountInfo without CHECK documentation nearby",
+      "description": "Raw AccountInfo surfaces need explicit ownership/signer documentation and constraints.",
+      "severity": "low",
+      "vulnType": "access_control",
+      "pattern": ":\\s*AccountInfo<'info>",
+      "unless": "///\\s*CHECK:|#\\[account\\(",
+      "confidence": 0.45,
+      "windowBefore": 160,
+      "windowAfter": 40,
+      "cwe": "284"
+    }
+  ]
+}
