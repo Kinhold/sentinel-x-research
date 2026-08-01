@@ -1,6 +1,7 @@
 import type { DiscoveryFinding, Report, Vulnerability, VulnerabilityType } from '@sentinel-x/contracts';
 import { fuseConfidence, structuralEvidenceScore } from './lattice.js';
 import type { ToolAdapterResult } from './verify-adapters.js';
+import { collapse, compose, evidenceOf, stageLift } from './proof-algebra.js';
 
 export interface VerificationResult {
   status: 'verified' | 'false_positive';
@@ -9,6 +10,7 @@ export interface VerificationResult {
   fvLog: string;
   counterExample?: string | null;
   latticeRationale?: string;
+  proofTrail?: string[];
 }
 
 const VERIFY_FLOOR = 0.62;
@@ -21,6 +23,8 @@ export function verifyFinding(
     adapters?: ToolAdapterResult[];
     historicalFpRate?: number;
     priorVerifiedSameFingerprint?: boolean;
+    causalBoost?: number;
+    temporalBoost?: number;
   } = {},
 ): VerificationResult {
   const harness = buildHarness(finding);
@@ -33,20 +37,40 @@ export function verifyFinding(
     historicalFpRate: options.historicalFpRate,
     priorVerifiedSameFingerprint: options.priorVerifiedSameFingerprint,
   });
-  const verified = lattice.confidence >= VERIFY_FLOOR && structural >= 2;
+
+  const proof = compose(
+    stageLift('lattice', () => ({
+      confidence: lattice.confidence,
+      structural,
+      note: `lattice ${lattice.rationale}`,
+    })),
+    stageLift('causal', (ev) => ({
+      confidence: ev.confidence + (options.causalBoost ?? 0),
+      note: `causal +${(options.causalBoost ?? 0).toFixed(3)}`,
+      tag: { causalBoost: options.causalBoost ?? 0 },
+    })),
+    stageLift('temporal', (ev) => ({
+      confidence: ev.confidence + (options.temporalBoost ?? 0),
+      note: `temporal +${(options.temporalBoost ?? 0).toFixed(3)}`,
+      tag: { temporalBoost: options.temporalBoost ?? 0 },
+    })),
+  )(evidenceOf(finding.confidenceScore, structural));
+
+  const decision = collapse(proof, VERIFY_FLOOR);
   const adapterNote = options.adapterLog ? ` Adapters: ${options.adapterLog}` : '';
 
   return {
-    status: verified ? 'verified' : 'false_positive',
-    confidenceScore: verified
-      ? Math.min(0.97, lattice.confidence + 0.04)
-      : Math.max(0.12, lattice.confidence - 0.18),
+    status: decision.verified ? 'verified' : 'false_positive',
+    confidenceScore: decision.verified
+      ? Math.min(0.97, decision.confidence + 0.03)
+      : Math.max(0.12, decision.confidence - 0.16),
     fvHarness: harness,
-    fvLog: verified
-      ? `Lattice verification accepted (structural=${structural}/3, ${lattice.rationale}).${adapterNote} Operator must validate on live scope.`
-      : `Lattice verification rejected (structural=${structural}/3, ${lattice.rationale}).${adapterNote} Downgraded to false positive.`,
-    counterExample: verified ? finding.pocCode ?? null : null,
+    fvLog: decision.verified
+      ? `Proof-algebra ACCEPT (structural=${structural}/3). ${decision.rationale}.${adapterNote} Operator must validate on live scope.`
+      : `Proof-algebra REJECT (structural=${structural}/3). ${decision.rationale}.${adapterNote} Downgraded to false positive.`,
+    counterExample: decision.verified ? finding.pocCode ?? null : null,
     latticeRationale: lattice.rationale,
+    proofTrail: proof.trail,
   };
 }
 
@@ -60,7 +84,7 @@ function buildHarness(finding: DiscoveryFinding): string {
     `file: ${finding.affectedFile ?? 'unknown'}`,
     `line: ${finding.lineNumber ?? 'unknown'}`,
     `function: ${finding.affectedFunction ?? 'unknown'}`,
-    'mode: confidence-lattice',
+    'mode: proof-algebra',
     'policy: never auto-submit to bounty platforms',
   ].join('\n');
 }

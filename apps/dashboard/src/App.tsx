@@ -98,7 +98,15 @@ export function App() {
   }
 
   async function onMarkReported(vulnerabilityId: number) {
-    await client.updateVulnerability(vulnerabilityId, 'reported');
+    const challenge = (await fetch(`${import.meta.env.VITE_API_BASE ?? ''}/api/vulnerabilities/${vulnerabilityId}/challenge`, {
+      method: 'POST',
+      headers: import.meta.env.VITE_API_KEY ? { 'x-api-key': import.meta.env.VITE_API_KEY } : undefined,
+    }).then((r) => r.json())) as {
+      challengeId: string;
+      nonce: string;
+      requiredEcho: { ruleId: string; fingerprint: string; affectedFile: string; lineNumber: number };
+    };
+    await client.updateVulnerabilityReported(vulnerabilityId, challenge);
     await refresh();
   }
 

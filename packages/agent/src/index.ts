@@ -34,6 +34,20 @@ export {
   createAndEnqueueCampaign,
   getCampaignStatus,
   applySuppressions,
+  compose,
+  evidenceOf,
+  collapse,
+  stageLift,
+  fitCalibration,
+  applyCalibration,
+  collectFixtureCalibrationPoints,
+  calibrateFinding,
+  buildCausalGraph,
+  causalBoostFor,
+  temporalPersistenceBoost,
+  issueOperatorChallenge,
+  verifyOperatorChallenge,
+  clearChallenges,
 } from './pipeline.js';
 export type { ScanRunnerOptions, ScanQueueOptions } from './pipeline.js';
 export { analyzeRustSources } from './rust.js';

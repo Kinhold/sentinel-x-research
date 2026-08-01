@@ -108,7 +108,19 @@ export function parseUpdateVulnerabilityBody(body: unknown): UpdateVulnerability
   if (!isRecord(body)) throw new Error('Body must be an object');
   const status = requireString(body.status, 'status') as VulnerabilityStatus;
   if (!VULN_STATUSES.has(status)) throw new Error('Unsupported vulnerability status');
-  return { status };
+  const result: UpdateVulnerabilityBody = { status };
+  if (status === 'reported') {
+    result.challengeId = requireString(body.challengeId, 'challengeId');
+    result.ruleId = typeof body.ruleId === 'string' ? body.ruleId : '';
+    result.fingerprint = typeof body.fingerprint === 'string' ? body.fingerprint : '';
+    result.affectedFile = typeof body.affectedFile === 'string' ? body.affectedFile : '';
+    if (typeof body.lineNumber !== 'number' || !Number.isInteger(body.lineNumber)) {
+      throw new Error('lineNumber must be an integer for reported status');
+    }
+    result.lineNumber = body.lineNumber;
+    result.nonce = requireString(body.nonce, 'nonce');
+  }
+  return result;
 }
 
 export function isTargetLanguage(value: string): value is TargetLanguage {

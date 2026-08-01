@@ -14,6 +14,8 @@ import { dispatchWebhooks } from './notify.js';
 import { applySuppressions } from './campaign.js';
 import { buildScanAttestation, hashRulePackPayload } from './attestation.js';
 import corePack from './rules/sentinel-core.json' with { type: 'json' };
+import { calibrateFinding, collectFixtureCalibrationPoints, fitCalibration } from './calibration.js';
+import { buildCausalGraph, causalBoostFor, temporalPersistenceBoost } from './causality.js';
 
 export class ScanCancelledError extends Error {
   constructor(message = 'Scan cancelled by operator') {
@@ -136,8 +138,28 @@ export class ScanRunner {
         `Hypothesis engine: ${hypotheses.length} claims (${hypoSummary.supported} supported / ${hypoSummary.refuted} refuted)`,
       );
       const refinedFindings = findings.map((finding) => applyHypothesisDeltas(finding, hypotheses));
+      const calibration =
+        this.options.fixturesDir != null
+          ? fitCalibration(collectFixtureCalibrationPoints(this.options.fixturesDir))
+          : null;
+      const calibratedFindings = calibration
+        ? refinedFindings.map((finding) => calibrateFinding(finding, calibration))
+        : refinedFindings;
+      if (calibration) {
+        this.store.appendProvenance(scanId, 'calibration.fit', {
+          samples: calibration.samples,
+          brierScore: calibration.brierScore,
+        });
+        log('discovery', 'info', `Calibration fit samples=${calibration.samples} brier=${calibration.brierScore}`);
+      }
+      const causalGraph = buildCausalGraph(calibratedFindings);
+      this.store.appendProvenance(scanId, 'causality.graph', {
+        nodes: causalGraph.nodes.length,
+        edges: causalGraph.edges.length,
+        roots: causalGraph.roots.length,
+      });
       const suppressions = this.store.listActiveSuppressions();
-      const { kept: actionableFindings, suppressed } = applySuppressions(refinedFindings, suppressions);
+      const { kept: actionableFindings, suppressed } = applySuppressions(calibratedFindings, suppressions);
       if (suppressed.length) {
         this.store.appendProvenance(scanId, 'suppression.applied', {
           suppressed: suppressed.length,
@@ -188,6 +210,11 @@ export class ScanRunner {
         const priorVerifiedSameFingerprint = Boolean(
           finding.fingerprint && this.store.findVerifiedByFingerprint(finding.fingerprint, target.id),
         );
+        const history = finding.fingerprint
+          ? this.store.listVulnerabilities({}).filter((v) => v.fingerprint === finding.fingerprint)
+          : [];
+        const causalBoost = causalBoostFor(finding, causalGraph);
+        const temporalBoost = temporalPersistenceBoost(finding.fingerprint, history);
 
         const verification = verifyFinding(finding, {
           adapterBoost,
@@ -195,6 +222,8 @@ export class ScanRunner {
           adapters,
           historicalFpRate,
           priorVerifiedSameFingerprint,
+          causalBoost,
+          temporalBoost,
         });
         this.store.appendProvenance(scanId, 'verification.result', {
           vulnerabilityId: vulnerability.id,
@@ -202,6 +231,9 @@ export class ScanRunner {
           status: verification.status,
           confidence: verification.confidenceScore,
           lattice: verification.latticeRationale,
+          proofTrail: verification.proofTrail,
+          causalBoost,
+          temporalBoost,
         });
         const updated = this.store.updateVulnerabilityVerification(vulnerability.id, {
           status: verification.status,
@@ -370,6 +402,10 @@ export {
 export { dispatchWebhooks, parseWebhookUrls, RateLimiter } from './notify.js';
 export { buildScanAttestation, verifyScanAttestation, hashRulePackPayload } from './attestation.js';
 export { createAndEnqueueCampaign, getCampaignStatus, applySuppressions } from './campaign.js';
+export { compose, evidenceOf, collapse, stageLift } from './proof-algebra.js';
+export { fitCalibration, applyCalibration, collectFixtureCalibrationPoints, calibrateFinding } from './calibration.js';
+export { buildCausalGraph, causalBoostFor, temporalPersistenceBoost } from './causality.js';
+export { issueOperatorChallenge, verifyOperatorChallenge, clearChallenges } from './challenge.js';
 
 function sleep(ms: number, signal: AbortSignal, reason?: () => string | undefined): Promise<void> {
   return new Promise((resolve, reject) => {

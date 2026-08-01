@@ -70,6 +70,10 @@ Optional operator auth: set `API_KEY` (API) / `VITE_API_KEY` (dashboard).
 - **Scan attestation**: HMAC-bound manifest of fingerprints + rule-pack hash (`GET /api/attestations/:scanId`, `ATTESTATION_SECRET`)
 - **Suppressions**: operator registry by fingerprint/rule/path (`/api/suppressions`)
 - **Campaigns**: multi-target orchestration with aggregate risk (`/api/campaigns`)
+- **Proof algebra**: composable Kleisli-style evidence stages with auditable trails
+- **Calibration**: fixture-labeled reliability diagram + Brier score (`GET /api/calibration`)
+- **Causality DAG**: enablement/co-location graph (`GET /api/causality/:language`)
+- **Operator challenge**: dual-control echo gate before `reported` status
 - **Audit trail**: operator actions at `GET /api/audit`
 - **Tool adapters** (opt-in): `ENABLE_TOOL_ADAPTERS=1` runs `cargo`/`nargo`/`anchor` when present — never invents tool output
 - **Request IDs**: every response carries `X-Request-Id`

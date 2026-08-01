@@ -38,6 +38,26 @@ export const client = {
       method: 'PATCH',
       body: JSON.stringify({ status }),
     }),
+  updateVulnerabilityReported: (
+    id: number,
+    challenge: {
+      challengeId: string;
+      nonce: string;
+      requiredEcho: { ruleId: string; fingerprint: string; affectedFile: string; lineNumber: number };
+    },
+  ) =>
+    api<Vulnerability>(`/api/vulnerabilities/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        status: 'reported',
+        challengeId: challenge.challengeId,
+        nonce: challenge.nonce,
+        ruleId: challenge.requiredEcho.ruleId,
+        fingerprint: challenge.requiredEcho.fingerprint,
+        affectedFile: challenge.requiredEcho.affectedFile,
+        lineNumber: challenge.requiredEcho.lineNumber,
+      }),
+    }),
   report: (vulnerabilityId: number) => api<Report>(`/api/reports/${vulnerabilityId}`),
   sarif: (scanId?: number) =>
     api<unknown>(`/api/exports/sarif${scanId != null ? `?scanId=${scanId}` : ''}`),

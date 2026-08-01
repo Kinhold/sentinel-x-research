@@ -452,6 +452,46 @@ paths:
         "200":
           description: Attestation
 
+  /calibration:
+    get:
+      operationId: getCalibration
+      tags: [stats]
+      summary: Fixture-fit confidence calibration model
+      responses:
+        "200":
+          description: Calibration model
+
+  /causality/{language}:
+    get:
+      operationId: getCausality
+      tags: [stats]
+      summary: Causal enablement graph for language fixture
+      parameters:
+        - name: language
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [rust, noir, solana]
+      responses:
+        "200":
+          description: Causal graph
+
+  /vulnerabilities/{id}/challenge:
+    post:
+      operationId: issueVulnerabilityChallenge
+      tags: [vulnerabilities]
+      summary: Issue operator challenge required before marking reported
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "201":
+          description: Challenge
+
   /stats/dashboard:
     get:
       operationId: getDashboardStats

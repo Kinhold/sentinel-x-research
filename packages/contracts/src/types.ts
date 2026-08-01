@@ -114,7 +114,14 @@ export interface Vulnerability {
 
 export interface UpdateVulnerabilityBody {
   status: VulnerabilityStatus;
+  challengeId?: string;
+  ruleId?: string;
+  fingerprint?: string;
+  affectedFile?: string;
+  lineNumber?: number;
+  nonce?: string;
 }
+
 
 export interface Report {
   vulnerabilityId: number;

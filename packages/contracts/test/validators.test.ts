@@ -30,6 +30,17 @@ test('parseCreateScanBody requires positive integer targetId', () => {
 test('parseUpdateVulnerabilityBody validates status enum', () => {
   assert.throws(() => parseUpdateVulnerabilityBody({ status: 'maybe' }));
   assert.equal(parseUpdateVulnerabilityBody({ status: 'verified' }).status, 'verified');
+  assert.throws(() => parseUpdateVulnerabilityBody({ status: 'reported' }));
+  const reported = parseUpdateVulnerabilityBody({
+    status: 'reported',
+    challengeId: 'abc',
+    nonce: 'n1',
+    ruleId: 'r',
+    fingerprint: 'f',
+    affectedFile: 'a.rs',
+    lineNumber: 3,
+  });
+  assert.equal(reported.challengeId, 'abc');
 });
 
 test('severity payout weights are ordered', () => {

@@ -14,6 +14,12 @@ import {
   createAndEnqueueCampaign,
   getCampaignStatus,
   verifyScanAttestation,
+  issueOperatorChallenge,
+  verifyOperatorChallenge,
+  collectFixtureCalibrationPoints,
+  fitCalibration,
+  buildCausalGraph,
+  analyzeFixtureDirectory,
 } from '@sentinel-x/agent';
 import {
   isTargetLanguage,
@@ -254,15 +260,31 @@ export function createApp(options: AppOptions = {}): Express {
   app.patch('/api/vulnerabilities/:id', (req, res, next) => {
     try {
       const body = parseUpdateVulnerabilityBody(req.body);
-      const vulnerability = store.updateVulnerabilityStatus(Number(req.params.id), body.status);
-      if (!vulnerability) {
+      const current = store.getVulnerability(Number(req.params.id));
+      if (!current) {
         res.status(404).json({ error: 'Vulnerability not found', requestId: req.requestId, code: 'not_found' });
         return;
       }
+      if (body.status === 'reported') {
+        const check = verifyOperatorChallenge({
+          challengeId: body.challengeId!,
+          vulnerabilityId: current.id,
+          ruleId: body.ruleId ?? '',
+          fingerprint: body.fingerprint ?? '',
+          affectedFile: body.affectedFile ?? '',
+          lineNumber: body.lineNumber ?? 0,
+          nonce: body.nonce!,
+        });
+        if (!check.ok) {
+          res.status(400).json({ error: check.reason ?? 'challenge failed', requestId: req.requestId, code: 'challenge_failed' });
+          return;
+        }
+      }
+      const vulnerability = store.updateVulnerabilityStatus(current.id, body.status);
       store.appendAudit({
         action: 'vulnerability.status',
         resourceType: 'vulnerability',
-        resourceId: String(vulnerability.id),
+        resourceId: String(vulnerability!.id),
         detail: body.status,
         requestId: req.requestId,
       });
@@ -270,6 +292,28 @@ export function createApp(options: AppOptions = {}): Express {
     } catch (error) {
       next(error);
     }
+  });
+
+  app.post('/api/vulnerabilities/:id/challenge', (req, res) => {
+    const vulnerability = store.getVulnerability(Number(req.params.id));
+    if (!vulnerability) {
+      res.status(404).json({ error: 'Vulnerability not found', requestId: req.requestId, code: 'not_found' });
+      return;
+    }
+    const challenge = issueOperatorChallenge({
+      vulnerabilityId: vulnerability.id,
+      ruleId: vulnerability.ruleId,
+      fingerprint: vulnerability.fingerprint,
+      affectedFile: vulnerability.affectedFile,
+      lineNumber: vulnerability.lineNumber,
+    });
+    store.appendAudit({
+      action: 'vulnerability.challenge',
+      resourceType: 'vulnerability',
+      resourceId: String(vulnerability.id),
+      requestId: req.requestId,
+    });
+    res.status(201).json(challenge);
   });
 
   app.get('/api/reports/:vulnerabilityId', (req, res) => {
@@ -427,6 +471,22 @@ export function createApp(options: AppOptions = {}): Express {
     }
     const verification = verifyScanAttestation(attestation.manifest as Parameters<typeof verifyScanAttestation>[0]);
     res.json({ ...attestation, verification });
+  });
+
+  app.get('/api/calibration', (_req, res) => {
+    const points = collectFixtureCalibrationPoints(fixturesDir);
+    res.json(fitCalibration(points));
+  });
+
+  app.get('/api/causality/:language', (req, res) => {
+    const language = req.params.language;
+    if (!isTargetLanguage(language)) {
+      res.status(400).json({ error: 'Unsupported language', requestId: req.requestId, code: 'bad_request' });
+      return;
+    }
+    const sample = `${language}-sample`;
+    const findings = analyzeFixtureDirectory(join(fixturesDir, sample), language);
+    res.json(buildCausalGraph(findings));
   });
 
   app.get('/api/stats/dashboard', (_req, res) => {
