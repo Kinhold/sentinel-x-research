@@ -67,6 +67,9 @@ Optional operator auth: set `API_KEY` (API) / `VITE_API_KEY` (dashboard).
 - **Metrics**: `GET /api/metrics` (JSON) or `?format=prometheus`
 - **Webhooks**: `WEBHOOK_URLS` (comma-separated) + optional `WEBHOOK_SECRET` signature
 - **Rate limit**: token bucket via `RATE_LIMIT_PER_MINUTE`
+- **Scan attestation**: HMAC-bound manifest of fingerprints + rule-pack hash (`GET /api/attestations/:scanId`, `ATTESTATION_SECRET`)
+- **Suppressions**: operator registry by fingerprint/rule/path (`/api/suppressions`)
+- **Campaigns**: multi-target orchestration with aggregate risk (`/api/campaigns`)
 - **Audit trail**: operator actions at `GET /api/audit`
 - **Tool adapters** (opt-in): `ENABLE_TOOL_ADAPTERS=1` runs `cargo`/`nargo`/`anchor` when present — never invents tool output
 - **Request IDs**: every response carries `X-Request-Id`

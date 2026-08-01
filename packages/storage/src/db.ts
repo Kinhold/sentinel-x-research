@@ -68,6 +68,48 @@ function migrate(db: DatabaseSync): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS suppressions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fingerprint TEXT,
+      rule_id TEXT,
+      path_glob TEXT,
+      reason TEXT NOT NULL,
+      created_by TEXT NOT NULL DEFAULT 'operator',
+      expires_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS campaigns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS campaign_targets (
+      campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      target_id INTEGER NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
+      PRIMARY KEY (campaign_id, target_id)
+    );
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS campaign_scans (
+      campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+      scan_id INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+      PRIMARY KEY (campaign_id, scan_id)
+    );
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS attestations (
+      scan_id INTEGER PRIMARY KEY REFERENCES scans(id) ON DELETE CASCADE,
+      content_hash TEXT NOT NULL,
+      signature TEXT,
+      manifest_json TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
 }
 
 export type SentinelDatabase = DatabaseSync;

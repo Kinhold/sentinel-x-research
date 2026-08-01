@@ -350,20 +350,107 @@ paths:
             application/json:
               schema:
                 type: object
-                properties:
-                  score:
-                    type: number
-                  band:
-                    type: string
-                    enum: [low, moderate, elevated, critical]
-                  nodes:
-                    type: integer
-                  edges:
-                    type: integer
-                  clusters:
-                    type: array
-                    items:
-                      type: object
+
+  /suppressions:
+    get:
+      operationId: listSuppressions
+      tags: [vulnerabilities]
+      summary: List active suppressions
+      responses:
+        "200":
+          description: Suppressions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      operationId: createSuppression
+      tags: [vulnerabilities]
+      summary: Create a suppression
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: Created
+
+  /suppressions/{id}:
+    delete:
+      operationId: deleteSuppression
+      tags: [vulnerabilities]
+      summary: Delete a suppression
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /campaigns:
+    get:
+      operationId: listCampaigns
+      tags: [scans]
+      summary: List campaigns
+      responses:
+        "200":
+          description: Campaigns
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      operationId: createCampaign
+      tags: [scans]
+      summary: Create and enqueue a multi-target campaign
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: Created
+
+  /campaigns/{id}:
+    get:
+      operationId: getCampaign
+      tags: [scans]
+      summary: Campaign status with aggregate risk
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Campaign status
+
+  /attestations/{scanId}:
+    get:
+      operationId: getAttestation
+      tags: [reports]
+      summary: Get HMAC-bound scan attestation manifest
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Attestation
 
   /stats/dashboard:
     get:

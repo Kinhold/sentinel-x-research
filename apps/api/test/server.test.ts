@@ -122,6 +122,63 @@ test('SARIF export returns tool driver and results', async () => {
   const riskBody = (await risk.json()) as { score: number; band: string };
   assert.ok(typeof riskBody.score === 'number');
   assert.ok(riskBody.band);
+
+  const attestation = await request(app, `/api/attestations/${scan.id}`);
+  assert.equal(attestation.status, 200);
+  const attBody = (await attestation.json()) as { contentHash: string; verification: { ok: boolean } };
+  assert.ok(attBody.contentHash);
+  assert.equal(attBody.verification.ok, true);
+});
+
+test('campaign and suppression lifecycle', async () => {
+  const app = testApp();
+  const t1 = await request(app, '/api/targets', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      repoUrl: 'https://github.com/example/rust-sample',
+      name: 'rust-sample',
+      language: 'rust',
+    }),
+  });
+  const t2 = await request(app, '/api/targets', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      repoUrl: 'https://github.com/example/noir-sample',
+      name: 'noir-sample',
+      language: 'noir',
+    }),
+  });
+  const target1 = (await t1.json()) as { id: number };
+  const target2 = (await t2.json()) as { id: number };
+  const campaignResponse = await request(app, '/api/campaigns', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'wave-5', targetIds: [target1.id, target2.id] }),
+  });
+  assert.equal(campaignResponse.status, 201);
+  const campaign = (await campaignResponse.json()) as { id: number; scanIds: number[] };
+  assert.equal(campaign.scanIds.length, 2);
+
+  const suppressionResponse = await request(app, '/api/suppressions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ruleId: 'rust.unwrap-panic', reason: 'noise in fixtures' }),
+  });
+  assert.equal(suppressionResponse.status, 201);
+
+  await waitFor(async () => {
+    const status = await request(app, `/api/campaigns/${campaign.id}`);
+    const body = (await status.json()) as { status: string };
+    return body.status === 'completed' || body.status === 'failed' || body.status === 'mixed';
+  }, 10000);
+
+  const status = await request(app, `/api/campaigns/${campaign.id}`);
+  assert.equal(status.status, 200);
+  const body = (await status.json()) as { status: string; risk: { score: number } };
+  assert.ok(['completed', 'failed', 'mixed'].includes(body.status));
+  assert.ok(typeof body.risk.score === 'number');
 });
 
 async function waitFor(predicate: () => Promise<boolean>, timeoutMs: number): Promise<void> {

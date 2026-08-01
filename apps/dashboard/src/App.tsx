@@ -135,12 +135,13 @@ export function App() {
                 client.metrics(),
                 client.risk(selectedScan ?? undefined),
                 selectedScan != null ? client.provenance(selectedScan) : null,
-              ]).then(([metrics, risk, provenance]) => {
-                setReport(JSON.stringify({ metrics, risk, provenance }, null, 2));
+                selectedScan != null ? client.attestation(selectedScan) : null,
+              ]).then(([metrics, risk, provenance, attestation]) => {
+                setReport(JSON.stringify({ metrics, risk, provenance, attestation }, null, 2));
               });
             }}
           >
-            Risk / lattice
+            Risk / attest
           </button>
         </div>
       </header>

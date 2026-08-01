@@ -4,12 +4,24 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { config } from 'dotenv';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
-import { ScanQueue, ScanRunner, RateLimiter, buildImmunefiReport, buildSarifReport, portfolioRiskScore } from '@sentinel-x/agent';
+import {
+  ScanQueue,
+  ScanRunner,
+  RateLimiter,
+  buildImmunefiReport,
+  buildSarifReport,
+  portfolioRiskScore,
+  createAndEnqueueCampaign,
+  getCampaignStatus,
+  verifyScanAttestation,
+} from '@sentinel-x/agent';
 import {
   isTargetLanguage,
   isVulnerabilitySeverity,
   isVulnerabilityStatus,
+  parseCreateCampaignBody,
   parseCreateScanBody,
+  parseCreateSuppressionBody,
   parseCreateTargetBody,
   parseUpdateVulnerabilityBody,
 } from '@sentinel-x/contracts';
@@ -340,6 +352,81 @@ export function createApp(options: AppOptions = {}): Express {
       scanId: Number.isInteger(scanId) ? scanId : undefined,
     });
     res.json(portfolioRiskScore(vulnerabilities));
+  });
+
+  app.get('/api/suppressions', (_req, res) => {
+    res.json(store.listActiveSuppressions());
+  });
+
+  app.post('/api/suppressions', (req, res, next) => {
+    try {
+      const body = parseCreateSuppressionBody(req.body);
+      const suppression = store.createSuppression(body);
+      store.appendAudit({
+        action: 'suppression.create',
+        resourceType: 'suppression',
+        resourceId: String(suppression.id),
+        detail: body.reason,
+        requestId: req.requestId,
+      });
+      res.status(201).json(suppression);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete('/api/suppressions/:id', (req, res) => {
+    const deleted = store.deleteSuppression(Number(req.params.id));
+    if (deleted) {
+      store.appendAudit({
+        action: 'suppression.delete',
+        resourceType: 'suppression',
+        resourceId: String(req.params.id),
+        requestId: req.requestId,
+      });
+    }
+    res.status(deleted ? 204 : 404).end();
+  });
+
+  app.get('/api/campaigns', (_req, res) => {
+    res.json(store.listCampaigns());
+  });
+
+  app.post('/api/campaigns', (req, res, next) => {
+    try {
+      const body = parseCreateCampaignBody(req.body);
+      const plan = createAndEnqueueCampaign(store, queue, body);
+      store.appendAudit({
+        action: 'campaign.create',
+        resourceType: 'campaign',
+        resourceId: String(plan.id),
+        detail: body.name,
+        requestId: req.requestId,
+      });
+      res.status(201).json(plan);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/campaigns/:id', (req, res) => {
+    const status = getCampaignStatus(store, Number(req.params.id));
+    if (!status) {
+      res.status(404).json({ error: 'Campaign not found', requestId: req.requestId, code: 'not_found' });
+      return;
+    }
+    res.json(status);
+  });
+
+  app.get('/api/attestations/:scanId', (req, res) => {
+    const scanId = Number(req.params.scanId);
+    const attestation = store.getAttestation(scanId);
+    if (!attestation) {
+      res.status(404).json({ error: 'Attestation not found', requestId: req.requestId, code: 'not_found' });
+      return;
+    }
+    const verification = verifyScanAttestation(attestation.manifest as Parameters<typeof verifyScanAttestation>[0]);
+    res.json({ ...attestation, verification });
   });
 
   app.get('/api/stats/dashboard', (_req, res) => {

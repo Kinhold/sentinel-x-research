@@ -764,4 +764,182 @@ export class SentinelStore {
       targetsTotal: q('SELECT COUNT(*) AS count FROM targets'),
     };
   }
+
+  createSuppression(input: {
+    fingerprint?: string | null;
+    ruleId?: string | null;
+    pathGlob?: string | null;
+    reason: string;
+    createdBy?: string;
+    expiresAt?: string | null;
+  }): {
+    id: number;
+    fingerprint: string | null;
+    ruleId: string | null;
+    pathGlob: string | null;
+    reason: string;
+    createdBy: string;
+    expiresAt: string | null;
+    createdAt: string;
+  } {
+    if (!input.fingerprint && !input.ruleId && !input.pathGlob) {
+      throw new Error('Suppression requires fingerprint, ruleId, or pathGlob');
+    }
+    const result = this.db
+      .prepare(
+        `INSERT INTO suppressions (fingerprint, rule_id, path_glob, reason, created_by, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.fingerprint ?? null,
+        input.ruleId ?? null,
+        input.pathGlob ?? null,
+        input.reason,
+        input.createdBy ?? 'operator',
+        input.expiresAt ?? null,
+      );
+    return this.getSuppression(Number(result.lastInsertRowid))!;
+  }
+
+  getSuppression(id: number) {
+    const row = this.db.prepare('SELECT * FROM suppressions WHERE id = ?').get(id) as
+      | {
+          id: number;
+          fingerprint: string | null;
+          rule_id: string | null;
+          path_glob: string | null;
+          reason: string;
+          created_by: string;
+          expires_at: string | null;
+          created_at: string;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      id: row.id,
+      fingerprint: row.fingerprint,
+      ruleId: row.rule_id,
+      pathGlob: row.path_glob,
+      reason: row.reason,
+      createdBy: row.created_by,
+      expiresAt: row.expires_at,
+      createdAt: row.created_at,
+    };
+  }
+
+  listActiveSuppressions(): Array<{
+    id: number;
+    fingerprint: string | null;
+    ruleId: string | null;
+    pathGlob: string | null;
+    reason: string;
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, fingerprint, rule_id, path_glob, reason
+         FROM suppressions
+         WHERE expires_at IS NULL OR expires_at > datetime('now')
+         ORDER BY id DESC`,
+      )
+      .all() as Array<{
+      id: number;
+      fingerprint: string | null;
+      rule_id: string | null;
+      path_glob: string | null;
+      reason: string;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      fingerprint: row.fingerprint,
+      ruleId: row.rule_id,
+      pathGlob: row.path_glob,
+      reason: row.reason,
+    }));
+  }
+
+  deleteSuppression(id: number): boolean {
+    return this.db.prepare('DELETE FROM suppressions WHERE id = ?').run(id).changes > 0;
+  }
+
+  createCampaign(name: string, targetIds: number[]): { id: number; name: string; createdAt: string; targetIds: number[] } {
+    const result = this.db.prepare('INSERT INTO campaigns (name) VALUES (?)').run(name);
+    const id = Number(result.lastInsertRowid);
+    const insert = this.db.prepare('INSERT INTO campaign_targets (campaign_id, target_id) VALUES (?, ?)');
+    for (const targetId of targetIds) insert.run(id, targetId);
+    return this.getCampaign(id)!;
+  }
+
+  getCampaign(id: number): { id: number; name: string; createdAt: string; targetIds: number[] } | null {
+    const row = this.db.prepare('SELECT id, name, created_at FROM campaigns WHERE id = ?').get(id) as
+      | { id: number; name: string; created_at: string }
+      | undefined;
+    if (!row) return null;
+    const targets = this.db
+      .prepare('SELECT target_id FROM campaign_targets WHERE campaign_id = ?')
+      .all(id) as Array<{ target_id: number }>;
+    return {
+      id: row.id,
+      name: row.name,
+      createdAt: row.created_at,
+      targetIds: targets.map((t) => t.target_id),
+    };
+  }
+
+  listCampaigns(): Array<{ id: number; name: string; createdAt: string; targetIds: number[] }> {
+    const rows = this.db.prepare('SELECT id FROM campaigns ORDER BY id DESC').all() as Array<{ id: number }>;
+    return rows.map((row) => this.getCampaign(row.id)!);
+  }
+
+  linkCampaignScan(campaignId: number, scanId: number): void {
+    this.db
+      .prepare('INSERT OR IGNORE INTO campaign_scans (campaign_id, scan_id) VALUES (?, ?)')
+      .run(campaignId, scanId);
+  }
+
+  listCampaignScans(campaignId: number): Scan[] {
+    const rows = this.db
+      .prepare('SELECT scan_id FROM campaign_scans WHERE campaign_id = ? ORDER BY scan_id ASC')
+      .all(campaignId) as Array<{ scan_id: number }>;
+    return rows.map((row) => this.getScan(row.scan_id)).filter((scan): scan is Scan => Boolean(scan));
+  }
+
+  upsertAttestation(scanId: number, contentHash: string, signature: string | null, manifest: unknown): void {
+    this.db
+      .prepare(
+        `INSERT INTO attestations (scan_id, content_hash, signature, manifest_json)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(scan_id) DO UPDATE SET
+           content_hash = excluded.content_hash,
+           signature = excluded.signature,
+           manifest_json = excluded.manifest_json,
+           created_at = datetime('now')`,
+      )
+      .run(scanId, contentHash, signature, JSON.stringify(manifest));
+  }
+
+  getAttestation(scanId: number): {
+    scanId: number;
+    contentHash: string;
+    signature: string | null;
+    manifest: unknown;
+    createdAt: string;
+  } | null {
+    const row = this.db.prepare('SELECT * FROM attestations WHERE scan_id = ?').get(scanId) as
+      | {
+          scan_id: number;
+          content_hash: string;
+          signature: string | null;
+          manifest_json: string;
+          created_at: string;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      scanId: row.scan_id,
+      contentHash: row.content_hash,
+      signature: row.signature,
+      manifest: JSON.parse(row.manifest_json) as unknown,
+      createdAt: row.created_at,
+    };
+  }
 }

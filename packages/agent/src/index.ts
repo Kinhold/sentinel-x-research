@@ -28,6 +28,12 @@ export {
   dispatchWebhooks,
   parseWebhookUrls,
   RateLimiter,
+  buildScanAttestation,
+  verifyScanAttestation,
+  hashRulePackPayload,
+  createAndEnqueueCampaign,
+  getCampaignStatus,
+  applySuppressions,
 } from './pipeline.js';
 export type { ScanRunnerOptions, ScanQueueOptions } from './pipeline.js';
 export { analyzeRustSources } from './rust.js';

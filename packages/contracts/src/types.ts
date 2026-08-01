@@ -74,6 +74,19 @@ export interface CreateScanBody {
   targetId: number;
 }
 
+export interface CreateCampaignBody {
+  name: string;
+  targetIds: number[];
+}
+
+export interface CreateSuppressionBody {
+  fingerprint?: string | null;
+  ruleId?: string | null;
+  pathGlob?: string | null;
+  reason: string;
+  expiresAt?: string | null;
+}
+
 export interface Vulnerability {
   id: number;
   scanId: number;

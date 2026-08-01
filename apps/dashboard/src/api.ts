@@ -48,6 +48,13 @@ export const client = {
     api<{ score: number; band: string; clusters: unknown[] }>(
       `/api/risk${scanId != null ? `?scanId=${scanId}` : ''}`,
     ),
+  attestation: (scanId: number) => api<Record<string, unknown>>(`/api/attestations/${scanId}`),
+  campaigns: () => api<unknown[]>('/api/campaigns'),
+  createCampaign: (name: string, targetIds: number[]) =>
+    api<unknown>('/api/campaigns', {
+      method: 'POST',
+      body: JSON.stringify({ name, targetIds }),
+    }),
 };
 
 export type TargetLanguage = 'rust' | 'noir' | 'solana';

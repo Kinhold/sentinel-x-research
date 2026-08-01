@@ -11,6 +11,9 @@ import {
   summarizeHypotheses,
 } from './hypothesis.js';
 import { dispatchWebhooks } from './notify.js';
+import { applySuppressions } from './campaign.js';
+import { buildScanAttestation, hashRulePackPayload } from './attestation.js';
+import corePack from './rules/sentinel-core.json' with { type: 'json' };
 
 export class ScanCancelledError extends Error {
   constructor(message = 'Scan cancelled by operator') {
@@ -133,13 +136,22 @@ export class ScanRunner {
         `Hypothesis engine: ${hypotheses.length} claims (${hypoSummary.supported} supported / ${hypoSummary.refuted} refuted)`,
       );
       const refinedFindings = findings.map((finding) => applyHypothesisDeltas(finding, hypotheses));
+      const suppressions = this.store.listActiveSuppressions();
+      const { kept: actionableFindings, suppressed } = applySuppressions(refinedFindings, suppressions);
+      if (suppressed.length) {
+        this.store.appendProvenance(scanId, 'suppression.applied', {
+          suppressed: suppressed.length,
+          fingerprints: suppressed.map((f) => f.fingerprint).filter(Boolean),
+        });
+        log('verification', 'info', `Suppressed ${suppressed.length} findings via operator registry`);
+      }
 
       let bugsFound = 0;
       let bugsVerified = 0;
       let duplicatesSkipped = 0;
       this.store.updateScan(scanId, { phase: 'verification' });
 
-      for (const finding of refinedFindings) {
+      for (const finding of actionableFindings) {
         checkpoint();
         if (this.options.dedupeFingerprints !== false && finding.fingerprint) {
           const prior = this.store.findVerifiedByFingerprint(finding.fingerprint, target.id);
@@ -247,9 +259,23 @@ export class ScanRunner {
         bugsFound,
         bugsVerified,
         duplicatesSkipped,
+        suppressed: suppressed.length,
         hypotheses: hypoSummary,
         risk: portfolioRiskScore(this.store.listVulnerabilities({ scanId })),
         chainValid: this.store.verifyProvenanceChain(scanId),
+      });
+      const attestation = buildScanAttestation({
+        scanId,
+        targetId: target.id,
+        sourceMode: workspace.mode,
+        sourceCommit: workspace.commit,
+        rulePackHash: hashRulePackPayload(corePack),
+        vulnerabilities: this.store.listVulnerabilities({ scanId }),
+      });
+      this.store.upsertAttestation(scanId, attestation.contentHash, attestation.signature, attestation);
+      this.store.appendProvenance(scanId, 'attestation.issued', {
+        contentHash: attestation.contentHash,
+        signed: Boolean(attestation.signature),
       });
       this.store.appendActivity(
         'scan_completed',
@@ -268,6 +294,7 @@ export class ScanRunner {
           targetId: target.id,
           targetName: target.name,
           hypotheses: hypoSummary,
+          attestationHash: attestation.contentHash,
         },
       }).then((results) => {
         if (results.length) {
@@ -341,6 +368,8 @@ export {
   portfolioRiskScore,
 } from './hypothesis.js';
 export { dispatchWebhooks, parseWebhookUrls, RateLimiter } from './notify.js';
+export { buildScanAttestation, verifyScanAttestation, hashRulePackPayload } from './attestation.js';
+export { createAndEnqueueCampaign, getCampaignStatus, applySuppressions } from './campaign.js';
 
 function sleep(ms: number, signal: AbortSignal, reason?: () => string | undefined): Promise<void> {
   return new Promise((resolve, reject) => {

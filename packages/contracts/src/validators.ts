@@ -1,6 +1,8 @@
 import type {
   CreateScanBody,
+  CreateCampaignBody,
   CreateTargetBody,
+  CreateSuppressionBody,
   TargetLanguage,
   UpdateVulnerabilityBody,
   VulnerabilitySeverity,
@@ -67,6 +69,39 @@ export function parseCreateScanBody(body: unknown): CreateScanBody {
     throw new Error('targetId must be a positive integer');
   }
   return { targetId: body.targetId };
+}
+
+export function parseCreateCampaignBody(body: unknown): CreateCampaignBody {
+  if (!isRecord(body)) throw new Error('Body must be an object');
+  const name = requireString(body.name, 'name');
+  if (!Array.isArray(body.targetIds) || body.targetIds.length === 0) {
+    throw new Error('targetIds must be a non-empty array');
+  }
+  const targetIds = body.targetIds.map((value, index) => {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+      throw new Error(`targetIds[${index}] must be a positive integer`);
+    }
+    return value;
+  });
+  return { name, targetIds };
+}
+
+export function parseCreateSuppressionBody(body: unknown): CreateSuppressionBody {
+  if (!isRecord(body)) throw new Error('Body must be an object');
+  const reason = requireString(body.reason, 'reason');
+  const fingerprint = optionalString(body.fingerprint);
+  const ruleId = optionalString(body.ruleId);
+  const pathGlob = optionalString(body.pathGlob);
+  if (!fingerprint && !ruleId && !pathGlob) {
+    throw new Error('Suppression requires fingerprint, ruleId, or pathGlob');
+  }
+  return {
+    reason,
+    fingerprint,
+    ruleId,
+    pathGlob,
+    expiresAt: optionalString(body.expiresAt),
+  };
 }
 
 export function parseUpdateVulnerabilityBody(body: unknown): UpdateVulnerabilityBody {
