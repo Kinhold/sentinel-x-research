@@ -20,6 +20,13 @@ import {
   fitCalibration,
   buildCausalGraph,
   analyzeFixtureDirectory,
+  rankFindingsForAttention,
+  commitReview,
+  revealReview,
+  campaignLineageRoot,
+  shadowDualRun,
+  collectSourceFiles,
+  learnPriorsFromHistory,
 } from '@sentinel-x/agent';
 import {
   isTargetLanguage,
@@ -487,6 +494,124 @@ export function createApp(options: AppOptions = {}): Express {
     const sample = `${language}-sample`;
     const findings = analyzeFixtureDirectory(join(fixturesDir, sample), language);
     res.json(buildCausalGraph(findings));
+  });
+
+  app.get('/api/shadow/:language', (req, res) => {
+    const language = req.params.language;
+    if (!isTargetLanguage(language)) {
+      res.status(400).json({ error: 'Unsupported language', requestId: req.requestId, code: 'bad_request' });
+      return;
+    }
+    const files = collectSourceFiles(join(fixturesDir, `${language}-sample`), language);
+    res.json(shadowDualRun(language, files));
+  });
+
+  app.get('/api/attention/:scanId', (req, res) => {
+    const scanId = Number(req.params.scanId);
+    if (!store.getScan(scanId)) {
+      res.status(404).json({ error: 'Scan not found', requestId: req.requestId, code: 'not_found' });
+      return;
+    }
+    const vulns = store.listVulnerabilities({ scanId });
+    const asFindings = vulns.map((v) => ({
+      title: v.title,
+      description: v.description,
+      severity: v.severity,
+      vulnType: v.vulnType,
+      confidenceScore: v.confidenceScore ?? 0.5,
+      affectedFile: v.affectedFile ?? undefined,
+      affectedFunction: v.affectedFunction ?? undefined,
+      lineNumber: v.lineNumber ?? undefined,
+      ruleId: v.ruleId ?? undefined,
+      fingerprint: v.fingerprint ?? undefined,
+      pocCode: v.pocCode ?? undefined,
+    }));
+    res.json(rankFindingsForAttention(asFindings));
+  });
+
+  app.get('/api/priors', (_req, res) => {
+    res.json(learnPriorsFromHistory(store.listVulnerabilities({})));
+  });
+
+  app.post('/api/reviews/commit', (req, res, next) => {
+    try {
+      const vulnerabilityId = Number(req.body?.vulnerabilityId);
+      const notes = typeof req.body?.notes === 'string' ? req.body.notes : '';
+      const decision = req.body?.decision;
+      if (!Number.isInteger(vulnerabilityId) || vulnerabilityId < 1) throw new Error('vulnerabilityId required');
+      if (!['approve_report', 'reject_false_positive', 'defer'].includes(decision)) {
+        throw new Error('decision must be approve_report|reject_false_positive|defer');
+      }
+      if (!store.getVulnerability(vulnerabilityId)) throw new Error('Vulnerability not found');
+      const result = commitReview({ vulnerabilityId, notes, decision });
+      store.appendAudit({
+        action: 'review.commit',
+        resourceType: 'vulnerability',
+        resourceId: String(vulnerabilityId),
+        requestId: req.requestId,
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/reviews/reveal', (req, res, next) => {
+    try {
+      const reveal = {
+        commitmentId: String(req.body?.commitmentId ?? ''),
+        vulnerabilityId: Number(req.body?.vulnerabilityId),
+        secret: String(req.body?.secret ?? ''),
+        notes: String(req.body?.notes ?? ''),
+        decision: req.body?.decision as 'approve_report' | 'reject_false_positive' | 'defer',
+      };
+      const result = revealReview(reveal);
+      if (!result.ok) {
+        res.status(400).json({ error: result.reason, requestId: req.requestId, code: 'reveal_failed' });
+        return;
+      }
+      if (result.decision === 'approve_report') {
+        // Still require challenge endpoint for reported — commit-reveal alone is notes integrity.
+        store.appendAudit({
+          action: 'review.reveal.approve',
+          resourceType: 'vulnerability',
+          resourceId: String(reveal.vulnerabilityId),
+          detail: result.notes,
+          requestId: req.requestId,
+        });
+      } else if (result.decision === 'reject_false_positive') {
+        store.updateVulnerabilityStatus(reveal.vulnerabilityId, 'false_positive');
+        store.appendAudit({
+          action: 'review.reveal.reject',
+          resourceType: 'vulnerability',
+          resourceId: String(reveal.vulnerabilityId),
+          detail: result.notes,
+          requestId: req.requestId,
+        });
+      }
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/api/campaigns/:id/lineage', (req, res) => {
+    const campaignId = Number(req.params.id);
+    const campaign = store.getCampaign(campaignId);
+    if (!campaign) {
+      res.status(404).json({ error: 'Campaign not found', requestId: req.requestId, code: 'not_found' });
+      return;
+    }
+    const scans = store.listCampaignScans(campaignId);
+    const attestations = scans
+      .map((scan) => store.getAttestation(scan.id))
+      .filter((a): a is NonNullable<typeof a> => Boolean(a))
+      .map((a) => ({ scanId: a.scanId, contentHash: a.contentHash }));
+    res.json({
+      campaignId,
+      attestations,
+      merkleRoot: campaignLineageRoot(attestations),
+    });
   });
 
   app.get('/api/stats/dashboard', (_req, res) => {

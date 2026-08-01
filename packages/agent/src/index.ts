@@ -48,6 +48,17 @@ export {
   issueOperatorChallenge,
   verifyOperatorChallenge,
   clearChallenges,
+  rankFindingsForAttention,
+  binaryEntropy,
+  updateRulePrior,
+  learnPriorsFromHistory,
+  priorBoostFromMean,
+  commitReview,
+  revealReview,
+  merkleRoot,
+  campaignLineageRoot,
+  clearCommitments,
+  shadowDualRun,
 } from './pipeline.js';
 export type { ScanRunnerOptions, ScanQueueOptions } from './pipeline.js';
 export { analyzeRustSources } from './rust.js';

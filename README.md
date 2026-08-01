@@ -74,6 +74,11 @@ Optional operator auth: set `API_KEY` (API) / `VITE_API_KEY` (dashboard).
 - **Calibration**: fixture-labeled reliability diagram + Brier score (`GET /api/calibration`)
 - **Causality DAG**: enablement/co-location graph (`GET /api/causality/:language`)
 - **Operator challenge**: dual-control echo gate before `reported` status
+- **Attention ranking**: information-gain / entropy ordering for operator review (`GET /api/attention/:scanId`)
+- **Feedback priors**: Beta updates from reported vs false_positive (`GET /api/priors`)
+- **Commit-reveal reviews**: blinded operator notes (`POST /api/reviews/commit|reveal`)
+- **Shadow dual-run**: specialized vs declarative pack agreement (`GET /api/shadow/:language`)
+- **Campaign Merkle lineage**: attestation rollup (`GET /api/campaigns/:id/lineage`)
 - **Audit trail**: operator actions at `GET /api/audit`
 - **Tool adapters** (opt-in): `ENABLE_TOOL_ADAPTERS=1` runs `cargo`/`nargo`/`anchor` when present — never invents tool output
 - **Request IDs**: every response carries `X-Request-Id`

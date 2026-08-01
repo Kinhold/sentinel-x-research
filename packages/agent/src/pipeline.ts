@@ -16,6 +16,9 @@ import { buildScanAttestation, hashRulePackPayload } from './attestation.js';
 import corePack from './rules/sentinel-core.json' with { type: 'json' };
 import { calibrateFinding, collectFixtureCalibrationPoints, fitCalibration } from './calibration.js';
 import { buildCausalGraph, causalBoostFor, temporalPersistenceBoost } from './causality.js';
+import { learnPriorsFromHistory, priorBoostFromMean, rankFindingsForAttention } from './ranking.js';
+import { shadowDualRun } from './shadow.js';
+import { collectSourceFiles } from './discovery.js';
 
 export class ScanCancelledError extends Error {
   constructor(message = 'Scan cancelled by operator') {
@@ -158,8 +161,45 @@ export class ScanRunner {
         edges: causalGraph.edges.length,
         roots: causalGraph.roots.length,
       });
+
+      const fanIn: Record<string, number> = {};
+      for (const edge of causalGraph.edges) {
+        fanIn[edge.to] = (fanIn[edge.to] ?? 0) + 1;
+      }
+      const priors = learnPriorsFromHistory(this.store.listVulnerabilities({}));
+      const priorAdjusted = calibratedFindings.map((finding) => {
+        const mean = finding.ruleId ? priors[finding.ruleId]?.mean : undefined;
+        const boost = mean == null ? 0 : priorBoostFromMean(mean);
+        return {
+          ...finding,
+          confidenceScore: Math.min(0.99, Math.max(0.05, finding.confidenceScore + boost)),
+        };
+      });
+      const ranked = rankFindingsForAttention(priorAdjusted, { causalFanIn: fanIn });
+      this.store.appendProvenance(scanId, 'attention.rank', {
+        top: ranked.slice(0, 5).map((f) => ({
+          fingerprint: f.fingerprint,
+          attentionScore: f.attentionScore,
+          surprise: f.surprise,
+        })),
+      });
+
+      const files = collectSourceFiles(workspace.path, target.language);
+      const shadow = shadowDualRun(target.language, files);
+      this.store.appendProvenance(scanId, 'shadow.dualrun', {
+        agreementRate: shadow.agreementRate,
+        onlySpecialized: shadow.onlySpecialized.length,
+        onlyDeclarative: shadow.onlyDeclarative.length,
+        both: shadow.both.length,
+      });
+      log(
+        'discovery',
+        'info',
+        `Shadow dual-run agreement=${shadow.agreementRate} (spec-only=${shadow.onlySpecialized.length}, pack-only=${shadow.onlyDeclarative.length})`,
+      );
+
       const suppressions = this.store.listActiveSuppressions();
-      const { kept: actionableFindings, suppressed } = applySuppressions(calibratedFindings, suppressions);
+      const { kept: actionableFindings, suppressed } = applySuppressions(ranked, suppressions);
       if (suppressed.length) {
         this.store.appendProvenance(scanId, 'suppression.applied', {
           suppressed: suppressed.length,
@@ -406,6 +446,15 @@ export { compose, evidenceOf, collapse, stageLift } from './proof-algebra.js';
 export { fitCalibration, applyCalibration, collectFixtureCalibrationPoints, calibrateFinding } from './calibration.js';
 export { buildCausalGraph, causalBoostFor, temporalPersistenceBoost } from './causality.js';
 export { issueOperatorChallenge, verifyOperatorChallenge, clearChallenges } from './challenge.js';
+export {
+  rankFindingsForAttention,
+  binaryEntropy,
+  updateRulePrior,
+  learnPriorsFromHistory,
+  priorBoostFromMean,
+} from './ranking.js';
+export { commitReview, revealReview, merkleRoot, campaignLineageRoot, clearCommitments } from './commit-reveal.js';
+export { shadowDualRun } from './shadow.js';
 
 function sleep(ms: number, signal: AbortSignal, reason?: () => string | undefined): Promise<void> {
   return new Promise((resolve, reject) => {
