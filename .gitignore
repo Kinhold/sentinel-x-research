@@ -8,3 +8,8 @@ coverage/
 *.db-journal
 .turbo/
 pnpm-debug.log*
+data/
+dist-types/
+apps/dashboard/dist/
+*.db-wal
+*.db-shm

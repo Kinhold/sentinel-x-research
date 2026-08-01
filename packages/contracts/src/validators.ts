@@ -1,6 +1,8 @@
 import type {
   CreateScanBody,
+  CreateCampaignBody,
   CreateTargetBody,
+  CreateSuppressionBody,
   TargetLanguage,
   UpdateVulnerabilityBody,
   VulnerabilitySeverity,
@@ -69,11 +71,56 @@ export function parseCreateScanBody(body: unknown): CreateScanBody {
   return { targetId: body.targetId };
 }
 
+export function parseCreateCampaignBody(body: unknown): CreateCampaignBody {
+  if (!isRecord(body)) throw new Error('Body must be an object');
+  const name = requireString(body.name, 'name');
+  if (!Array.isArray(body.targetIds) || body.targetIds.length === 0) {
+    throw new Error('targetIds must be a non-empty array');
+  }
+  const targetIds = body.targetIds.map((value, index) => {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+      throw new Error(`targetIds[${index}] must be a positive integer`);
+    }
+    return value;
+  });
+  return { name, targetIds };
+}
+
+export function parseCreateSuppressionBody(body: unknown): CreateSuppressionBody {
+  if (!isRecord(body)) throw new Error('Body must be an object');
+  const reason = requireString(body.reason, 'reason');
+  const fingerprint = optionalString(body.fingerprint);
+  const ruleId = optionalString(body.ruleId);
+  const pathGlob = optionalString(body.pathGlob);
+  if (!fingerprint && !ruleId && !pathGlob) {
+    throw new Error('Suppression requires fingerprint, ruleId, or pathGlob');
+  }
+  return {
+    reason,
+    fingerprint,
+    ruleId,
+    pathGlob,
+    expiresAt: optionalString(body.expiresAt),
+  };
+}
+
 export function parseUpdateVulnerabilityBody(body: unknown): UpdateVulnerabilityBody {
   if (!isRecord(body)) throw new Error('Body must be an object');
   const status = requireString(body.status, 'status') as VulnerabilityStatus;
   if (!VULN_STATUSES.has(status)) throw new Error('Unsupported vulnerability status');
-  return { status };
+  const result: UpdateVulnerabilityBody = { status };
+  if (status === 'reported') {
+    result.challengeId = requireString(body.challengeId, 'challengeId');
+    result.ruleId = typeof body.ruleId === 'string' ? body.ruleId : '';
+    result.fingerprint = typeof body.fingerprint === 'string' ? body.fingerprint : '';
+    result.affectedFile = typeof body.affectedFile === 'string' ? body.affectedFile : '';
+    if (typeof body.lineNumber !== 'number' || !Number.isInteger(body.lineNumber)) {
+      throw new Error('lineNumber must be an integer for reported status');
+    }
+    result.lineNumber = body.lineNumber;
+    result.nonce = requireString(body.nonce, 'nonce');
+  }
+  return result;
 }
 
 export function isTargetLanguage(value: string): value is TargetLanguage {

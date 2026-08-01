@@ -1,4 +1,7 @@
-import type { DiscoveryFinding, Report, Vulnerability } from '@sentinel-x/contracts';
+import type { DiscoveryFinding, Report, Vulnerability, VulnerabilityType } from '@sentinel-x/contracts';
+import { fuseConfidence, structuralEvidenceScore } from './lattice.js';
+import type { ToolAdapterResult } from './verify-adapters.js';
+import { collapse, compose, evidenceOf, stageLift } from './proof-algebra.js';
 
 export interface VerificationResult {
   status: 'verified' | 'false_positive';
@@ -6,33 +9,83 @@ export interface VerificationResult {
   fvHarness: string;
   fvLog: string;
   counterExample?: string | null;
+  latticeRationale?: string;
+  proofTrail?: string[];
 }
 
-export function verifyFinding(finding: DiscoveryFinding): VerificationResult {
+const VERIFY_FLOOR = 0.62;
+
+export function verifyFinding(
+  finding: DiscoveryFinding,
+  options: {
+    adapterBoost?: number;
+    adapterLog?: string;
+    adapters?: ToolAdapterResult[];
+    historicalFpRate?: number;
+    priorVerifiedSameFingerprint?: boolean;
+    causalBoost?: number;
+    temporalBoost?: number;
+  } = {},
+): VerificationResult {
   const harness = buildHarness(finding);
-  const hasConcreteSnippet = Boolean(finding.pocCode && finding.pocCode.trim().length > 8);
-  const highConfidence = finding.confidenceScore >= 0.7;
-  const verified = hasConcreteSnippet && highConfidence;
+  const structural = structuralEvidenceScore(finding);
+  const lattice = fuseConfidence({
+    finding,
+    structuralScore: structural,
+    adapterBoost: options.adapterBoost ?? 0,
+    adapters: options.adapters,
+    historicalFpRate: options.historicalFpRate,
+    priorVerifiedSameFingerprint: options.priorVerifiedSameFingerprint,
+  });
+
+  const proof = compose(
+    stageLift('lattice', () => ({
+      confidence: lattice.confidence,
+      structural,
+      note: `lattice ${lattice.rationale}`,
+    })),
+    stageLift('causal', (ev) => ({
+      confidence: ev.confidence + (options.causalBoost ?? 0),
+      note: `causal +${(options.causalBoost ?? 0).toFixed(3)}`,
+      tag: { causalBoost: options.causalBoost ?? 0 },
+    })),
+    stageLift('temporal', (ev) => ({
+      confidence: ev.confidence + (options.temporalBoost ?? 0),
+      note: `temporal +${(options.temporalBoost ?? 0).toFixed(3)}`,
+      tag: { temporalBoost: options.temporalBoost ?? 0 },
+    })),
+  )(evidenceOf(finding.confidenceScore, structural));
+
+  const decision = collapse(proof, VERIFY_FLOOR);
+  const adapterNote = options.adapterLog ? ` Adapters: ${options.adapterLog}` : '';
 
   return {
-    status: verified ? 'verified' : 'false_positive',
-    confidenceScore: verified ? Math.min(0.95, finding.confidenceScore + 0.08) : Math.max(0.2, finding.confidenceScore - 0.25),
+    status: decision.verified ? 'verified' : 'false_positive',
+    confidenceScore: decision.verified
+      ? Math.min(0.97, decision.confidence + 0.03)
+      : Math.max(0.12, decision.confidence - 0.16),
     fvHarness: harness,
-    fvLog: verified
-      ? 'Counterexample search exhausted for bounded input domain; witness lane remains reproducible from captured snippet.'
-      : 'Heuristic signal did not survive verification harness; downgraded to false positive.',
-    counterExample: verified ? finding.pocCode ?? null : null,
+    fvLog: decision.verified
+      ? `Proof-algebra ACCEPT (structural=${structural}/3). ${decision.rationale}.${adapterNote} Operator must validate on live scope.`
+      : `Proof-algebra REJECT (structural=${structural}/3). ${decision.rationale}.${adapterNote} Downgraded to false positive.`,
+    counterExample: decision.verified ? finding.pocCode ?? null : null,
+    latticeRationale: lattice.rationale,
+    proofTrail: proof.trail,
   };
 }
 
 function buildHarness(finding: DiscoveryFinding): string {
   return [
     '# Sentinel-X defensive verification harness',
-    `target_language: ${finding.vulnType}`,
+    `rule_id: ${finding.ruleId ?? 'legacy'}`,
+    `fingerprint: ${finding.fingerprint ?? 'n/a'}`,
+    `vuln_type: ${finding.vulnType}`,
     `assertion: ${finding.title}`,
     `file: ${finding.affectedFile ?? 'unknown'}`,
+    `line: ${finding.lineNumber ?? 'unknown'}`,
     `function: ${finding.affectedFunction ?? 'unknown'}`,
-    'mode: bounded-symbolic',
+    'mode: proof-algebra',
+    'policy: never auto-submit to bounty platforms',
   ].join('\n');
 }
 
@@ -47,9 +100,14 @@ export function buildImmunefiReport(vulnerability: Vulnerability): Report {
     `- Severity: **${vulnerability.severity}**`,
     `- Type: \`${vulnerability.vulnType}\``,
     `- Target language: \`${vulnerability.targetLanguage}\``,
+    vulnerability.ruleId ? `- Rule: \`${vulnerability.ruleId}\`` : null,
+    vulnerability.fingerprint ? `- Fingerprint: \`${vulnerability.fingerprint}\`` : null,
     vulnerability.affectedFile ? `- Affected file: \`${vulnerability.affectedFile}\`` : null,
     vulnerability.affectedFunction ? `- Affected function: \`${vulnerability.affectedFunction}\`` : null,
     vulnerability.lineNumber ? `- Line: ${vulnerability.lineNumber}` : null,
+    vulnerability.confidenceScore != null
+      ? `- Confidence: ${(vulnerability.confidenceScore * 100).toFixed(1)}%`
+      : null,
     '',
     '## Impact',
     impactFor(vulnerability.severity),
@@ -98,7 +156,7 @@ function impactFor(severity: Vulnerability['severity']): string {
   }
 }
 
-function recommendationFor(vulnType: Vulnerability['vulnType']): string {
+function recommendationFor(vulnType: VulnerabilityType): string {
   switch (vulnType) {
     case 'under_constrained_circuit':
       return 'Bind every private witness to public claims with explicit assertions and negative tests.';
@@ -108,6 +166,12 @@ function recommendationFor(vulnType: Vulnerability['vulnType']): string {
       return 'Constrain CPI targets with signer, owner, and has_one checks before invocation.';
     case 'uninitialized_account':
       return 'Require payer, space, and seed bindings on every init path.';
+    case 'reentrancy':
+      return 'Complete state updates before CPI, or use checks-effects-interactions with reentrancy guards.';
+    case 'access_control':
+      return 'Enforce signer/owner constraints and document unsafe invariants with adversarial tests.';
+    case 'arithmetic_error':
+      return 'Guard denominators and prove domain constraints before Field division.';
     default:
       return 'Add explicit invariants, negative tests, and independent review before mainnet or bounty submission.';
   }

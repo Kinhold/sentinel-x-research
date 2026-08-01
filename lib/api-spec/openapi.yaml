@@ -36,6 +36,43 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 
+  /queue:
+    get:
+      operationId: getQueueSize
+      tags: [scans]
+      summary: Get scan queue depth
+      responses:
+        "200":
+          description: Queue size
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pending:
+                    type: integer
+                  active:
+                    type: integer
+                required: [pending, active]
+
+  /exports/sarif:
+    get:
+      operationId: exportSarif
+      tags: [reports]
+      summary: Export findings as SARIF 2.1.0
+      parameters:
+        - name: scanId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: SARIF log
+          content:
+            application/json:
+              schema:
+                type: object
+
   /targets:
     get:
       operationId: listTargets
@@ -276,6 +313,185 @@ paths:
               schema:
                 $ref: "#/components/schemas/Report"
 
+  /audit:
+    get:
+      operationId: listAuditEvents
+      tags: [logs]
+      summary: List recent operator audit events
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Audit events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /risk:
+    get:
+      operationId: getPortfolioRisk
+      tags: [stats]
+      summary: Portfolio risk score and correlation clusters
+      parameters:
+        - name: scanId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Risk score
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /suppressions:
+    get:
+      operationId: listSuppressions
+      tags: [vulnerabilities]
+      summary: List active suppressions
+      responses:
+        "200":
+          description: Suppressions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      operationId: createSuppression
+      tags: [vulnerabilities]
+      summary: Create a suppression
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: Created
+
+  /suppressions/{id}:
+    delete:
+      operationId: deleteSuppression
+      tags: [vulnerabilities]
+      summary: Delete a suppression
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /campaigns:
+    get:
+      operationId: listCampaigns
+      tags: [scans]
+      summary: List campaigns
+      responses:
+        "200":
+          description: Campaigns
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+    post:
+      operationId: createCampaign
+      tags: [scans]
+      summary: Create and enqueue a multi-target campaign
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "201":
+          description: Created
+
+  /campaigns/{id}:
+    get:
+      operationId: getCampaign
+      tags: [scans]
+      summary: Campaign status with aggregate risk
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Campaign status
+
+  /attestations/{scanId}:
+    get:
+      operationId: getAttestation
+      tags: [reports]
+      summary: Get HMAC-bound scan attestation manifest
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Attestation
+
+  /calibration:
+    get:
+      operationId: getCalibration
+      tags: [stats]
+      summary: Fixture-fit confidence calibration model
+      responses:
+        "200":
+          description: Calibration model
+
+  /causality/{language}:
+    get:
+      operationId: getCausality
+      tags: [stats]
+      summary: Causal enablement graph for language fixture
+      parameters:
+        - name: language
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [rust, noir, solana]
+      responses:
+        "200":
+          description: Causal graph
+
+  /vulnerabilities/{id}/challenge:
+    post:
+      operationId: issueVulnerabilityChallenge
+      tags: [vulnerabilities]
+      summary: Issue operator challenge required before marking reported
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "201":
+          description: Challenge
+
   /stats/dashboard:
     get:
       operationId: getDashboardStats
@@ -328,8 +544,22 @@ components:
       properties:
         status:
           type: string
+        requestId:
+          type: string
       required:
         - status
+
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: string
+        requestId:
+          type: string
+        code:
+          type: string
+      required:
+        - error
 
     Target:
       type: object
@@ -418,6 +648,16 @@ components:
           type: integer
         bugsVerified:
           type: integer
+        sourceMode:
+          type: string
+          enum: [fixture, clone, workspace]
+          nullable: true
+        sourcePath:
+          type: string
+          nullable: true
+        sourceCommit:
+          type: string
+          nullable: true
         target:
           $ref: "#/components/schemas/Target"
           nullable: true
@@ -488,6 +728,12 @@ components:
           nullable: true
         confidenceScore:
           type: number
+          nullable: true
+        ruleId:
+          type: string
+          nullable: true
+        fingerprint:
+          type: string
           nullable: true
         createdAt:
           type: string
@@ -582,7 +828,7 @@ components:
           type: integer
         type:
           type: string
-          enum: [scan_started, bug_found, bug_verified, scan_completed]
+          enum: [scan_started, bug_found, bug_verified, scan_completed, scan_cancelled, report_generated]
         message:
           type: string
         timestamp:

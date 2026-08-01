@@ -1,17 +1,30 @@
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import test from 'node:test';
+import { ScanRunner } from '@sentinel-x/agent';
+import { createDatabase, SentinelStore } from '@sentinel-x/storage';
 import { request } from './request.js';
 import { createApp } from '../src/server.js';
 
+const fixturesDir = join(import.meta.dirname, '../../../fixtures/repos');
+
+function testApp() {
+  const store = new SentinelStore(createDatabase());
+  const runner = new ScanRunner(store, { fixturesDir, allowClone: false });
+  return createApp({ store, runner, fixturesDir, apiKey: null });
+}
+
 test('health check responds ok', async () => {
-  const app = createApp();
+  const app = testApp();
   const response = await request(app, '/api/healthz');
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { status: 'ok' });
+  const body = (await response.json()) as { status: string; requestId?: string };
+  assert.equal(body.status, 'ok');
+  assert.ok(body.requestId);
 });
 
 test('target and scan lifecycle', async () => {
-  const app = createApp();
+  const app = testApp();
   const targetResponse = await request(app, '/api/targets', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -36,10 +49,136 @@ test('target and scan lifecycle', async () => {
     const body = (await current.json()) as { status: string };
     return body.status === 'completed' || body.status === 'failed';
   }, 8000);
+  const completed = await request(app, `/api/scans/${scan.id}`);
+  const completedBody = (await completed.json()) as { status: string; sourceMode?: string };
+  assert.equal(completedBody.status, 'completed');
+  assert.equal(completedBody.sourceMode, 'fixture');
   const statsResponse = await request(app, '/api/stats/dashboard');
   assert.equal(statsResponse.status, 200);
-  const stats = (await statsResponse.json()) as { totalScans: number };
+  const stats = (await statsResponse.json()) as { totalScans: number; verifiedVulnerabilities: number };
   assert.ok(stats.totalScans >= 1);
+  assert.ok(stats.verifiedVulnerabilities >= 1);
+});
+
+test('API key auth rejects missing credentials', async () => {
+  const store = new SentinelStore(createDatabase());
+  const runner = new ScanRunner(store, { fixturesDir, allowClone: false });
+  const app = createApp({ store, runner, fixturesDir, apiKey: 'secret' });
+  const denied = await request(app, '/api/targets');
+  assert.equal(denied.status, 401);
+  const allowed = await request(app, '/api/targets', {
+    headers: { 'x-api-key': 'secret' },
+  });
+  assert.equal(allowed.status, 200);
+});
+
+test('SARIF export returns tool driver and results', async () => {
+  const app = testApp();
+  const targetResponse = await request(app, '/api/targets', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      repoUrl: 'https://github.com/example/rust-sample',
+      name: 'rust-sample',
+      language: 'rust',
+      maxPayout: 1000,
+    }),
+  });
+  const target = (await targetResponse.json()) as { id: number };
+  const scanResponse = await request(app, '/api/scans', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ targetId: target.id }),
+  });
+  const scan = (await scanResponse.json()) as { id: number };
+  await waitFor(async () => {
+    const current = await request(app, `/api/scans/${scan.id}`);
+    const body = (await current.json()) as { status: string };
+    return body.status === 'completed' || body.status === 'failed';
+  }, 8000);
+  const sarifResponse = await request(app, `/api/exports/sarif?scanId=${scan.id}`);
+  assert.equal(sarifResponse.status, 200);
+  const sarif = (await sarifResponse.json()) as {
+    version: string;
+    runs: Array<{ tool: { driver: { name: string } }; results: unknown[] }>;
+  };
+  assert.equal(sarif.version, '2.1.0');
+  assert.equal(sarif.runs[0]?.tool.driver.name, 'Sentinel-X');
+  assert.ok((sarif.runs[0]?.results.length ?? 0) >= 1);
+
+  const metrics = await request(app, '/api/metrics');
+  assert.equal(metrics.status, 200);
+  const metricsBody = (await metrics.json()) as { scansTotal: number; queue: { pending: number } };
+  assert.ok(metricsBody.scansTotal >= 1);
+
+  const provenance = await request(app, `/api/provenance/${scan.id}`);
+  assert.equal(provenance.status, 200);
+  const provBody = (await provenance.json()) as { chainValid: boolean; entries: unknown[] };
+  assert.equal(provBody.chainValid, true);
+  assert.ok(provBody.entries.length >= 1);
+
+  const risk = await request(app, `/api/risk?scanId=${scan.id}`);
+  assert.equal(risk.status, 200);
+  const riskBody = (await risk.json()) as { score: number; band: string };
+  assert.ok(typeof riskBody.score === 'number');
+  assert.ok(riskBody.band);
+
+  const attestation = await request(app, `/api/attestations/${scan.id}`);
+  assert.equal(attestation.status, 200);
+  const attBody = (await attestation.json()) as { contentHash: string; verification: { ok: boolean } };
+  assert.ok(attBody.contentHash);
+  assert.equal(attBody.verification.ok, true);
+});
+
+test('campaign and suppression lifecycle', async () => {
+  const app = testApp();
+  const t1 = await request(app, '/api/targets', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      repoUrl: 'https://github.com/example/rust-sample',
+      name: 'rust-sample',
+      language: 'rust',
+    }),
+  });
+  const t2 = await request(app, '/api/targets', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      repoUrl: 'https://github.com/example/noir-sample',
+      name: 'noir-sample',
+      language: 'noir',
+    }),
+  });
+  const target1 = (await t1.json()) as { id: number };
+  const target2 = (await t2.json()) as { id: number };
+  const campaignResponse = await request(app, '/api/campaigns', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'wave-5', targetIds: [target1.id, target2.id] }),
+  });
+  assert.equal(campaignResponse.status, 201);
+  const campaign = (await campaignResponse.json()) as { id: number; scanIds: number[] };
+  assert.equal(campaign.scanIds.length, 2);
+
+  const suppressionResponse = await request(app, '/api/suppressions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ruleId: 'rust.unwrap-panic', reason: 'noise in fixtures' }),
+  });
+  assert.equal(suppressionResponse.status, 201);
+
+  await waitFor(async () => {
+    const status = await request(app, `/api/campaigns/${campaign.id}`);
+    const body = (await status.json()) as { status: string };
+    return body.status === 'completed' || body.status === 'failed' || body.status === 'mixed';
+  }, 10000);
+
+  const status = await request(app, `/api/campaigns/${campaign.id}`);
+  assert.equal(status.status, 200);
+  const body = (await status.json()) as { status: string; risk: { score: number } };
+  assert.ok(['completed', 'failed', 'mixed'].includes(body.status));
+  assert.ok(typeof body.risk.score === 'number');
 });
 
 async function waitFor(predicate: () => Promise<boolean>, timeoutMs: number): Promise<void> {
