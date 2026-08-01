@@ -57,12 +57,16 @@ Optional operator auth: set `API_KEY` (API) / `VITE_API_KEY` (dashboard).
 - **Scan queue**: concurrency (`SCAN_CONCURRENCY`) + timeout (`SCAN_TIMEOUT_MS`)
 - **Fingerprint dedupe**: skip re-verifying findings already verified/reported for the same target
 - **Confidence lattice**: auditable fusion of base rule score + structural evidence + adapter boost + historical FP rate + prior fingerprint
+- **Hypothesis engine**: constrained read-only claims (location reproduce, function blast radius) that adjust confidence before verification
+- **Portfolio risk graph**: correlated findings by file/function/type (`GET /api/risk`)
 - **Declarative rule packs**: JSON packs (`sentinel-core`) merge with specialized analyzers; CWE-tagged
 - **Provenance ledger**: hash-chained per-scan evidence (`GET /api/provenance/:scanId`)
 - **Scope firewall**: deny/allow globs on discovered files
 - **Differential discovery**: when a prior commit exists, prefer changed files
 - **SARIF export**: `GET /api/exports/sarif?scanId=`
 - **Metrics**: `GET /api/metrics` (JSON) or `?format=prometheus`
+- **Webhooks**: `WEBHOOK_URLS` (comma-separated) + optional `WEBHOOK_SECRET` signature
+- **Rate limit**: token bucket via `RATE_LIMIT_PER_MINUTE`
 - **Audit trail**: operator actions at `GET /api/audit`
 - **Tool adapters** (opt-in): `ENABLE_TOOL_ADAPTERS=1` runs `cargo`/`nargo`/`anchor` when present — never invents tool output
 - **Request IDs**: every response carries `X-Request-Id`

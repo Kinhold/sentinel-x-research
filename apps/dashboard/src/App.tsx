@@ -131,14 +131,16 @@ export function App() {
             className="btn ghost"
             type="button"
             onClick={() => {
-              void Promise.all([client.metrics(), selectedScan != null ? client.provenance(selectedScan) : null]).then(
-                ([metrics, provenance]) => {
-                  setReport(JSON.stringify({ metrics, provenance }, null, 2));
-                },
-              );
+              void Promise.all([
+                client.metrics(),
+                client.risk(selectedScan ?? undefined),
+                selectedScan != null ? client.provenance(selectedScan) : null,
+              ]).then(([metrics, risk, provenance]) => {
+                setReport(JSON.stringify({ metrics, risk, provenance }, null, 2));
+              });
             }}
           >
-            Lattice / provenance
+            Risk / lattice
           </button>
         </div>
       </header>

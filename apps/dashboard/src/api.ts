@@ -44,6 +44,10 @@ export const client = {
   metrics: () => api<Record<string, unknown>>('/api/metrics'),
   provenance: (scanId: number) =>
     api<{ scanId: number; chainValid: boolean; entries: unknown[] }>(`/api/provenance/${scanId}`),
+  risk: (scanId?: number) =>
+    api<{ score: number; band: string; clusters: unknown[] }>(
+      `/api/risk${scanId != null ? `?scanId=${scanId}` : ''}`,
+    ),
 };
 
 export type TargetLanguage = 'rust' | 'noir' | 'solana';

@@ -21,6 +21,13 @@ export {
   applyScopeFirewall,
   matchGlob,
   filterToChanged,
+  runHypothesisEngine,
+  applyHypothesisDeltas,
+  summarizeHypotheses,
+  portfolioRiskScore,
+  dispatchWebhooks,
+  parseWebhookUrls,
+  RateLimiter,
 } from './pipeline.js';
 export type { ScanRunnerOptions, ScanQueueOptions } from './pipeline.js';
 export { analyzeRustSources } from './rust.js';

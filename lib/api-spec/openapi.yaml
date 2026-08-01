@@ -313,6 +313,58 @@ paths:
               schema:
                 $ref: "#/components/schemas/Report"
 
+  /audit:
+    get:
+      operationId: listAuditEvents
+      tags: [logs]
+      summary: List recent operator audit events
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Audit events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /risk:
+    get:
+      operationId: getPortfolioRisk
+      tags: [stats]
+      summary: Portfolio risk score and correlation clusters
+      parameters:
+        - name: scanId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Risk score
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  score:
+                    type: number
+                  band:
+                    type: string
+                    enum: [low, moderate, elevated, critical]
+                  nodes:
+                    type: integer
+                  edges:
+                    type: integer
+                  clusters:
+                    type: array
+                    items:
+                      type: object
+
   /stats/dashboard:
     get:
       operationId: getDashboardStats

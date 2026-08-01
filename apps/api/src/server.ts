@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { config } from 'dotenv';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
-import { ScanQueue, ScanRunner, buildImmunefiReport, buildSarifReport } from '@sentinel-x/agent';
+import { ScanQueue, ScanRunner, RateLimiter, buildImmunefiReport, buildSarifReport, portfolioRiskScore } from '@sentinel-x/agent';
 import {
   isTargetLanguage,
   isVulnerabilitySeverity,
@@ -27,6 +27,7 @@ export interface AppOptions {
   apiKey?: string | null;
   scanConcurrency?: number;
   scanTimeoutMs?: number;
+  rateLimitPerMinute?: number;
 }
 
 const rootDir = join(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -71,6 +72,9 @@ export function createApp(options: AppOptions = {}): Express {
     });
   const corsOrigin = options.corsOrigin ?? process.env.CORS_ORIGIN ?? 'http://localhost:5174';
   const apiKey = options.apiKey === undefined ? process.env.API_KEY ?? null : options.apiKey;
+  const rateLimitPerMinute =
+    options.rateLimitPerMinute ?? Number(process.env.RATE_LIMIT_PER_MINUTE ?? 120);
+  const limiter = new RateLimiter(rateLimitPerMinute, rateLimitPerMinute / 60);
 
   const app = express();
 
@@ -89,6 +93,19 @@ export function createApp(options: AppOptions = {}): Express {
     next();
   });
   app.use(express.json({ limit: '1mb' }));
+
+  app.use((req, res, next) => {
+    if (req.path === '/api/healthz' || req.path === '/api/metrics') {
+      next();
+      return;
+    }
+    const key = req.header('x-api-key') || req.ip || 'anon';
+    if (!limiter.allow(key)) {
+      res.status(429).json({ error: 'Rate limit exceeded', requestId: req.requestId, code: 'rate_limited' });
+      return;
+    }
+    next();
+  });
 
   app.use((req, res, next) => {
     if (!apiKey) {
@@ -315,6 +332,14 @@ export function createApp(options: AppOptions = {}): Express {
   app.get('/api/audit', (req, res) => {
     const limit = req.query.limit ? Number(req.query.limit) : 50;
     res.json(store.listAuditEvents(Number.isFinite(limit) ? limit : 50));
+  });
+
+  app.get('/api/risk', (req, res) => {
+    const scanId = req.query.scanId ? Number(req.query.scanId) : undefined;
+    const vulnerabilities = store.listVulnerabilities({
+      scanId: Number.isInteger(scanId) ? scanId : undefined,
+    });
+    res.json(portfolioRiskScore(vulnerabilities));
   });
 
   app.get('/api/stats/dashboard', (_req, res) => {

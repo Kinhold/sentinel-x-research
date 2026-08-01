@@ -4,6 +4,13 @@ import { analyzeFixtureDirectory } from './discovery.js';
 import { resolveScanWorkspace, type IngestOptions } from './ingest.js';
 import { buildImmunefiReport, verifyFinding } from './report.js';
 import { aggregateAdapterBoost, runVerificationAdapters } from './verify-adapters.js';
+import {
+  applyHypothesisDeltas,
+  portfolioRiskScore,
+  runHypothesisEngine,
+  summarizeHypotheses,
+} from './hypothesis.js';
+import { dispatchWebhooks } from './notify.js';
 
 export class ScanCancelledError extends Error {
   constructor(message = 'Scan cancelled by operator') {
@@ -109,12 +116,30 @@ export class ScanRunner {
         `Discovery complete: ${findings.length} candidate findings${previousCommit ? ` (diff since ${previousCommit.slice(0, 8)})` : ''}`,
       );
 
+      checkpoint();
+      const hypotheses = runHypothesisEngine(findings, {
+        workspacePath: workspace.path,
+        language: target.language,
+        signal: controller.signal,
+      });
+      const hypoSummary = summarizeHypotheses(hypotheses);
+      this.store.appendProvenance(scanId, 'hypothesis.complete', {
+        ...hypoSummary,
+        total: hypotheses.length,
+      });
+      log(
+        'discovery',
+        'info',
+        `Hypothesis engine: ${hypotheses.length} claims (${hypoSummary.supported} supported / ${hypoSummary.refuted} refuted)`,
+      );
+      const refinedFindings = findings.map((finding) => applyHypothesisDeltas(finding, hypotheses));
+
       let bugsFound = 0;
       let bugsVerified = 0;
       let duplicatesSkipped = 0;
       this.store.updateScan(scanId, { phase: 'verification' });
 
-      for (const finding of findings) {
+      for (const finding of refinedFindings) {
         checkpoint();
         if (this.options.dedupeFingerprints !== false && finding.fingerprint) {
           const prior = this.store.findVerifiedByFingerprint(finding.fingerprint, target.id);
@@ -222,6 +247,8 @@ export class ScanRunner {
         bugsFound,
         bugsVerified,
         duplicatesSkipped,
+        hypotheses: hypoSummary,
+        risk: portfolioRiskScore(this.store.listVulnerabilities({ scanId })),
         chainValid: this.store.verifyProvenanceChain(scanId),
       });
       this.store.appendActivity(
@@ -231,6 +258,22 @@ export class ScanRunner {
         scanId,
       );
       log('idle', 'info', `Scan ${scanId} completed`);
+      void dispatchWebhooks({
+        type: 'scan.completed',
+        scanId,
+        timestamp: new Date().toISOString(),
+        payload: {
+          bugsFound,
+          bugsVerified,
+          targetId: target.id,
+          targetName: target.name,
+          hypotheses: hypoSummary,
+        },
+      }).then((results) => {
+        if (results.length) {
+          this.store.appendProvenance(scanId, 'webhook.dispatch', { results });
+        }
+      });
     } catch (error) {
       const cancelled = error instanceof ScanCancelledError || (error instanceof Error && error.name === 'AbortError');
       const message = cancelled
@@ -251,6 +294,12 @@ export class ScanRunner {
         log('idle', 'warn', message);
       } else {
         log('idle', 'error', message);
+        void dispatchWebhooks({
+          type: 'scan.failed',
+          scanId,
+          timestamp: new Date().toISOString(),
+          payload: { error: message, targetId: target.id },
+        });
         throw error;
       }
     } finally {
@@ -285,6 +334,13 @@ export { runVerificationAdapters, aggregateAdapterBoost } from './verify-adapter
 export { fuseConfidence, structuralEvidenceScore } from './lattice.js';
 export { applyRulePack, loadRulePack, mergeFindings } from './rules/engine.js';
 export { applyScopeFirewall, matchGlob, filterToChanged } from './scope.js';
+export {
+  runHypothesisEngine,
+  applyHypothesisDeltas,
+  summarizeHypotheses,
+  portfolioRiskScore,
+} from './hypothesis.js';
+export { dispatchWebhooks, parseWebhookUrls, RateLimiter } from './notify.js';
 
 function sleep(ms: number, signal: AbortSignal, reason?: () => string | undefined): Promise<void> {
   return new Promise((resolve, reject) => {

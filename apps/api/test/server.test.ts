@@ -116,6 +116,12 @@ test('SARIF export returns tool driver and results', async () => {
   const provBody = (await provenance.json()) as { chainValid: boolean; entries: unknown[] };
   assert.equal(provBody.chainValid, true);
   assert.ok(provBody.entries.length >= 1);
+
+  const risk = await request(app, `/api/risk?scanId=${scan.id}`);
+  assert.equal(risk.status, 200);
+  const riskBody = (await risk.json()) as { score: number; band: string };
+  assert.ok(typeof riskBody.score === 'number');
+  assert.ok(riskBody.band);
 });
 
 async function waitFor(predicate: () => Promise<boolean>, timeoutMs: number): Promise<void> {
